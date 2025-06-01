@@ -80,7 +80,23 @@ You can use various flags with the setup script:
 To install these dotfiles on your actual Ubuntu 24.04 system:
 
 ```bash
-git clone https://github.com/username/dotfiles.git
+cd ~
+mkdir dotfiles
+cd dotfiles
+wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/docker_test.sh
+wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/apt-apps.txt
+wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/fzf.bash
+wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/setup-dotFiles.sh
+wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/README.md
+wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/Dockerfile
+wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/bashrc
+wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/tmux.conf
+
+```
+
+
+```bash
+git clone git@github.com:FPGArtktic/setup-DotFiles.git
 cd dotfiles
 ./setup-dotFile.sh
 ```
