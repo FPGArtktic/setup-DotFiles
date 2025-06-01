@@ -1,0 +1,7 @@
+GRUB_DEFAULT=4
+GRUB_SAVEDEFAULT=saved
+GRUB_TIMEOUT_STYLE=countdown
+GRUB_TIMEOUT=30
+
+
+sudo update-grub
