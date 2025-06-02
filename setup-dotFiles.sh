@@ -420,7 +420,7 @@ main() {
     install_bashrc
     install_apt_packages
     install_sshkey
-    install_vscode
+    # install_vscode
     install_docker
     install_fzf
     install_ram_disk

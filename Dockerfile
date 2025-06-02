@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:22.04
 
 # Install sudo and create a user with sudo privileges
 RUN apt-get update && \
