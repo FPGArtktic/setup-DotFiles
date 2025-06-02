@@ -320,7 +320,8 @@ install_tailscale() {
     if $DRY_RUN; then
         echo "Dry run: tailscale installation would be performed here."
     else
-        sudo curl -fsSL https://tailscale.com/install.sh
+        curl -fsSL https://tailscale.com/install.sh | sudo sh
+
     fi
 }
 
