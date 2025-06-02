@@ -1,5 +1,4 @@
-# setup-dotFiles My personal dotfiles and configuration scripts for Ubuntu 24.04
-
+# setup-dotFiles My personal dotfiles and configuration scripts for Ubuntu/Debian
 <p align="center">
   <img src="img/logo.jpeg" alt="setup-dotFiles" width="500"/>
 </p>
