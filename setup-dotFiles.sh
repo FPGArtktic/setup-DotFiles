@@ -1,5 +1,5 @@
 #!/bin/bash
-# Linux: DotFile postinstall Setup Script Ubuntu 24.04
+# Linux: DotFile postinstall Setup Script Ubuntu 22.04
 # Version: 1.0.0
 #
 # Copyright (C) 2025 Mateusz Okulanis
