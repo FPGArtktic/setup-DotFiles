@@ -1,5 +1,5 @@
 #!/bin/bash
-# Linux: DotFile postinstall Setup Script Ubuntu 22.04
+# Linux: DotFile postinstall Setup Script Debian bookworm
 # Version: 1.0.0
 #
 # Copyright (C) 2025 Mateusz Okulanis
@@ -249,25 +249,28 @@ install_docker() {
     else
         echo "Installing Docker..."
         # Add Docker's official GPG key:
+        # Add Docker's official GPG key:
         sudo apt-get update
         sudo apt-get install ca-certificates curl
         sudo install -m 0755 -d /etc/apt/keyrings
-        sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+        sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
         sudo chmod a+r /etc/apt/keyrings/docker.asc
+
         # Add the repository to Apt sources:
         echo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-        $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
+        $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
         sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
         sudo apt-get update
         sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-        sudo docker run hello-world
         sudo groupadd docker
         sudo usermod -aG docker $USER
-        sudo systemctl start docker.service
-        sudo systemctl start containerd.service
         sudo systemctl enable docker.service
         sudo systemctl enable containerd.service
+        sudo systemctl start docker.service
+        sudo systemctl start containerd.service
+        echo "Docker installed successfully."
+        echo "You may need to log out and back in for the changes to take effect."
     fi
 }
 
@@ -320,7 +323,7 @@ install_tailscale() {
     if $DRY_RUN; then
         echo "Dry run: tailscale installation would be performed here."
     else
-        sudo curl -fsSL https://tailscale.com/install.sh
+        curl -fsSL https://tailscale.com/install.sh | sudo sh
     fi
 }
 
@@ -420,7 +423,7 @@ main() {
     install_bashrc
     install_apt_packages
     install_sshkey
-    # install_vscode
+    install_vscode
     install_docker
     install_fzf
     install_ram_disk

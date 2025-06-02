@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM debian:bookworm
 
 # Install sudo and create a user with sudo privileges
 RUN apt-get update && \
