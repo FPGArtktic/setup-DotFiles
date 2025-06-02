@@ -321,7 +321,79 @@ install_tailscale() {
         echo "Dry run: tailscale installation would be performed here."
     else
         sudo curl -fsSL https://tailscale.com/install.sh
-        echo "TMUX config installed successfully."
+    fi
+}
+
+install_sshkey() {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+    else
+    while true; do
+        echo "Do you want to install ssh keygen? ([Y]/n)"
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
+            break
+        elif [[ "$answer" =~ ^[Nn]$ ]]; then
+            if $VERBOSE; then
+                echo "Skipping ssh keygen installation."
+            fi
+            return
+        else
+            echo "Please answer Y (yes) or N (no)."
+        fi
+    done
+    fi
+    if $DRY_RUN; then
+        echo "Dry run: ssh keygen would be performed here."
+    else
+        if $SKIP_SETUP; then
+            echo "Generating SSH key..."
+            ssh-keygen -t ed25519 -C "$GIT_EMAIL"
+            echo "SSH key generated successfully."
+        else 
+            echo "Generating SSH key..."
+            ssh-keygen -t ed25519 -C "$GIT_EMAIL"
+            echo "SSH key generated successfully."
+            echo "Add the public key to your GitHub account:"
+            echo "cat ~/.ssh/id_ed25519.pub"
+            echo "Remember to add the private key to your SSH agent:"
+            echo "ssh-add ~/.ssh/id_ed25519"
+        fi
+    fi
+}
+
+install_vscode() {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+    else
+    while true; do
+        echo "Do you want to install vs code? ([Y]/n)"
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
+            break
+        elif [[ "$answer" =~ ^[Nn]$ ]]; then
+            if $VERBOSE; then
+                echo "Skipping vs code installation."
+            fi
+            return
+        else
+            echo "Please answer Y (yes) or N (no)."
+        fi
+    done
+    fi
+    if $DRY_RUN; then
+        echo "Dry run: vscode would be performed here."
+    else
+        echo "Installing Visual Studio Code..."
+        sudo apt-get install wget gpg
+        wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
+        sudo install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
+        echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" |sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
+        rm -f packages.microsoft.gpg
+        sudo apt install apt-transport-https
+        sudo apt update
+        sudo apt install code # or code-insiders
+        echo "Visual Studio Code installed successfully."
     fi
 }
 
@@ -347,6 +419,8 @@ main() {
     install_update_and_upgrade
     install_bashrc
     install_apt_packages
+    install_sshkey
+    install_vscode
     install_docker
     install_fzf
     install_ram_disk
