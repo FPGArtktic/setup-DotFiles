@@ -1,5 +1,5 @@
 #!/bin/bash
-# Linux: DotFile postinstall Setup Script Debian bookworm
+# Linux: DotFile postinstall Setup Script Debian bullseye
 # Version: 1.0.0
 #
 # Copyright (C) 2025 Mateusz Okulanis
@@ -423,7 +423,7 @@ main() {
     install_bashrc
     install_apt_packages
     install_sshkey
-    install_vscode
+    # install_vscode
     install_docker
     install_fzf
     install_ram_disk
