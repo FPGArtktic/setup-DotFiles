@@ -8,7 +8,7 @@
 
 ## Overview
 
-This repository contains a comprehensive set of dotfiles and configuration scripts for setting up an Ubuntu 24.04 environment. It automates the installation and configuration of various tools, packages, and settings to quickly set up a consistent development environment.
+This repository contains a comprehensive set of dotfiles and configuration scripts for setting up an Ubuntu 24.04, Ubuntu 22.04, Ubuntu 20.04, Debian Bookworm, Debian Bullseye environment (look for branches). It automates the installation and configuration of various tools, packages, and settings to quickly set up a consistent development environment.
 
 ## Why this project?
 
