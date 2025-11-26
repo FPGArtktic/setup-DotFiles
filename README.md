@@ -1,4 +1,4 @@
-# setup-dotFiles My personal dotfiles and configuration scripts for Ubuntu/Debian
+# setup-dotFiles My personal dotfiles and configuration scripts for Ubuntu/Debian/Arch (arch branch)
 
 <p align="center">
   <img src="img/logo.jpeg" alt="setup-dotFiles" width="500"/>
@@ -8,7 +8,7 @@
 
 ## Overview
 
-This repository contains a comprehensive set of dotfiles and configuration scripts for setting up an Ubuntu 24.04 environment. It automates the installation and configuration of various tools, packages, and settings to quickly set up a consistent development environment.
+This repository contains a comprehensive set of dotfiles and configuration scripts for setting up an Ubuntu 24.04 environment or I added special branch for Arch Linux. It automates the installation and configuration of various tools, packages, and settings to quickly set up a consistent development environment.
 
 ## Why this project?
 

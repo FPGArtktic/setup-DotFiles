@@ -183,27 +183,27 @@ install_update_and_upgrade() {
         if $DRY_RUN; then
             echo "Dry run: Package lists would be updated here."
         else
-            sudo apt-get -y update
-            sudo apt-get -y full-upgrade
+            sudo pacman -Syu
+            sudo pacman -S --noconfirm --needed base-devel git neofetch
         fi
     fi
 }
 
-install_apt_packages() {
+install_yay_packages() {
     if $SKIP_SETUP; then
         echo > /dev/null
     else
     while true; do
-        echo "Apt install"
+        echo "Yay install"
         echo "Note: This will install all packages listed in the script."
-        cat apt-apps.txt
-        echo "Do you want to these install apt packages? ([Y]/n)"
+        cat yay-apps.txt
+        echo "Do you want to these install yay  packages? ([Y]/n)"
         read -r answer
         if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
             break
         elif [[ "$answer" =~ ^[Nn]$ ]]; then
             if $VERBOSE; then
-                echo "Skipping apt installation."
+                echo "Skipping yay installation."
             fi
             return
         else
@@ -211,25 +211,25 @@ install_apt_packages() {
         fi
     done
     fi
-    echo "Installing apt packages..."
+    echo "Installing yay  packages..."
     if $DRY_RUN; then
-        echo "Dry run: Apt packages installation would be performed here."
-        echo "apt-get install -y $(cat apt-apps.txt)"
+        echo "Dry run: yay  packages installation would be performed here."
+        echo "yay -S $(cat yay-apps.txt)"
         return
     else
         if $VERBOSE; then
-            echo "Apt packages installed successfully."
+            echo "Yay packages installed successfully."
         fi
     fi
-    sudo apt-get install -y $(cat apt-apps.txt)
+    yay -S $(cat yay-apps.txt)
 }
 
-install_docker() {
+install_docker_configuration() {
     if $SKIP_SETUP; then
         echo > /dev/null
     else
     while true; do
-        echo "Do you want to install Docker? ([Y]/n)"
+        echo "Do you want to install Docker configuration?  ([Y]/n)"
         read -r answer
         if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
             break
@@ -247,21 +247,7 @@ install_docker() {
     if $DRY_RUN; then
         echo "Dry run: Docker installation would be performed here."
     else
-        echo "Installing Docker..."
-        # Add Docker's official GPG key:
-        sudo apt-get update
-        sudo apt-get install ca-certificates curl
-        sudo install -m 0755 -d /etc/apt/keyrings
-        sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-        sudo chmod a+r /etc/apt/keyrings/docker.asc
-        # Add the repository to Apt sources:
-        echo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-        $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
-        sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-        sudo apt-get update
-        sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-        sudo docker run hello-world
+        echo "Installing Docker configuration..."
         sudo groupadd docker
         sudo usermod -aG docker $USER
         sudo systemctl start docker.service
@@ -270,6 +256,69 @@ install_docker() {
         sudo systemctl enable containerd.service
     fi
 }
+
+install_yay() {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+    else
+    while true; do
+        echo "Do you want to install yay? ([Y]/n)"
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
+            break
+        elif [[ "$answer" =~ ^[Nn]$ ]]; then
+            if $VERBOSE; then
+                echo "Skipping yay installation."
+            fi
+            return
+        else
+            echo "Please answer Y (yes) or N (no)."
+        fi
+    done
+    fi
+    if $DRY_RUN; then
+        echo "Dry run: yay installation would be performed here."
+    else
+        sudo pacman -S --needed git base-devel
+        git clone https://aur.archlinux.org/yay-bin.git
+        cd yay-bin
+        makepkg -si
+        cd -
+        yay -Y --gendb
+        yay -Syu --devel
+        yay -Y --devel --save
+
+    fi
+}
+
+install_virtualbox_configuration() {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+    else
+    while true; do
+        echo "Do you want to install VirtualBox configuration?  ([Y]/n)"
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
+            break
+        elif [[ "$answer" =~ ^[Nn]$ ]]; then
+            if $VERBOSE; then
+                echo "Skipping VirtualBox installation."
+            fi
+            return
+        else
+            echo "Please answer Y (yes) or N (no)."
+        fi
+    done
+    fi
+
+    if $DRY_RUN; then
+        echo "Dry run: VirtualBox installation would be performed here."
+    else
+        echo "Installing VirtualBox configuration..."
+        sudo usermod -aG vboxusers  $USER
+    fi
+}
+
 
 install_tmux() {
     if $SKIP_SETUP; then
@@ -362,48 +411,13 @@ install_sshkey() {
     fi
 }
 
-install_vscode() {
-    if $SKIP_SETUP; then
-        echo > /dev/null
-    else
-    while true; do
-        echo "Do you want to install vs code? ([Y]/n)"
-        read -r answer
-        if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
-            break
-        elif [[ "$answer" =~ ^[Nn]$ ]]; then
-            if $VERBOSE; then
-                echo "Skipping vs code installation."
-            fi
-            return
-        else
-            echo "Please answer Y (yes) or N (no)."
-        fi
-    done
-    fi
-    if $DRY_RUN; then
-        echo "Dry run: vscode would be performed here."
-    else
-        echo "Installing Visual Studio Code..."
-        sudo apt-get install wget gpg
-        wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
-        sudo install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
-        echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" |sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
-        rm -f packages.microsoft.gpg
-        sudo apt install apt-transport-https
-        sudo apt update
-        sudo apt install code # or code-insiders
-        echo "Visual Studio Code installed successfully."
-    fi
-}
-
 post_installation() {
     if $SKIP_SETUP; then
         echo > /dev/null
     else
         echo "Post-installation tasks completed."
-        sudo apt-get autoremove -y
-        sudo apt-get autoclean -y
+        yay -Syu
+        sudo pacman -Syu
         echo "System cleanup completed."
         echo "Please restart your terminal or run 'source ~/.bashrc' to apply changes."
     fi
@@ -418,10 +432,11 @@ main() {
     
     install_update_and_upgrade
     install_bashrc
-    install_apt_packages
+    install_yay
+    install_yay_packages
     install_sshkey
-    install_vscode
-    install_docker
+    install_docker_configuration
+    install_virtualbox_configuration
     install_fzf
     install_ram_disk
     install_tmux

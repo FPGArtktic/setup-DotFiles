@@ -19,3 +19,6 @@ PS1=$TIME$USER$HOST$LOCATION$BRANCH
 PS2='\[\033[01;36m\]>'
 
 alias cp='rsync -avh --progress'
+
+neofetch
+
