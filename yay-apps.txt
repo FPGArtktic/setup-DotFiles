@@ -67,3 +67,5 @@ nethogs
 glances
 usbguard
 rsync
+grub-btrfs
+exfat-utils
