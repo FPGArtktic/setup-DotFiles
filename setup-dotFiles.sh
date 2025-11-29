@@ -22,7 +22,7 @@ VERBOSE=false
 SKIP_SETUP=false
 GIT_AUTHOR="Mateusz Okulanis"
 GIT_EMAIL="FPGArtktic@outlook.com"
-
+PROBED_OS=""
 
 usage () {
     echo "Usage: $0 [OPTIONS]"
@@ -175,16 +175,30 @@ install_fzf() {
     cat ./fzf.bash > ~/.fzf.bash
     }
 
-install_update_and_upgrade() {
+install_ubuntu_update_and_upgrade() {
     if $SKIP_SETUP; then
         echo > /dev/null
     else
-        echo "Updating and upgrade package lists..."
+        echo "Updating ubuntu and upgrade package lists..."
         if $DRY_RUN; then
             echo "Dry run: Package lists would be updated here."
         else
             sudo apt-get -y update
             sudo apt-get -y full-upgrade
+        fi
+    fi
+}
+
+install_arch_update_and_upgrade() {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+    else
+        echo "Updating arch and upgrade package lists..."
+        if $DRY_RUN; then
+            echo "Dry run: Package lists would be updated here."
+        else
+            sudo pacman -Syu --noconfirm
+            sudo yay -Syu --noconfirm
         fi
     fi
 }
@@ -224,7 +238,42 @@ install_apt_packages() {
     sudo apt-get install -y $(cat apt-apps.txt)
 }
 
-install_docker() {
+install_yay_packages() {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+    else
+    while true; do
+        echo "Yay install"
+        echo "Note: This will install all packages listed in the script."
+        cat yay-apps.txt
+        echo "Do you want to these install yay packages? ([Y]/n)"
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
+            break
+        elif [[ "$answer" =~ ^[Nn]$ ]]; then
+            if $VERBOSE; then
+                echo "Skipping yay installation."
+            fi
+            return
+        else
+            echo "Please answer Y (yes) or N (no)."
+        fi
+    done
+    fi
+    echo "Installing yay packages..."
+    if $DRY_RUN; then
+        echo "Dry run: Yay packages installation would be performed here."
+        echo "yay -S --noconfirm $(cat yay-apps.txt)"
+        return
+    else
+        if $VERBOSE; then
+            echo "Yay packages installed successfully."
+        fi
+    fi
+    sudo yay -S --noconfirm $(cat yay-apps.txt)
+}
+
+install_ubuntu_docker() {
     if $SKIP_SETUP; then
         echo > /dev/null
     else
@@ -362,7 +411,7 @@ install_sshkey() {
     fi
 }
 
-install_vscode() {
+install_ubuntu_vscode() {
     if $SKIP_SETUP; then
         echo > /dev/null
     else
@@ -397,7 +446,36 @@ install_vscode() {
     fi
 }
 
-post_installation() {
+setup_cli_ai_clients() {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+    else
+    while true; do
+        echo "Do you want to install CLI AI clients? ([Y]/n)"
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
+            break
+        elif [[ "$answer" =~ ^[Nn]$ ]]; then
+            if $VERBOSE; then
+                echo "Skipping CLI AI clients installation."
+            fi
+            return
+        else
+            echo "Please answer Y (yes) or N (no)."
+        fi
+    done
+    fi
+    if $DRY_RUN; then
+        echo "Dry run: CLI AI clients installation would be performed here."
+    else
+        echo "Installing CLI AI clients..."
+        npm install -g @google/gemini-cli@latest
+        npm install -g @github/copilot
+        echo "CLI AI clients installed successfully."
+    fi
+}
+
+ubuntu_post_installation() {
     if $SKIP_SETUP; then
         echo > /dev/null
     else
@@ -409,25 +487,176 @@ post_installation() {
     fi
 }
 
+arch_post_installation() {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+    else
+        echo "Post-installation tasks completed."
+        sudo pacman -Rns $(pacman -Qtdq) --noconfirm
+        yay -Yc --noconfirm
+        echo "System cleanup completed."
+        echo "Please restart your terminal or run 'source ~/.bashrc' to apply changes."
+    fi
+}
+
+my_zsh_install() {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+    else
+    while true; do
+        echo "Do you want to install Oh My Zsh? ([Y]/n)"
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
+            break
+        elif [[ "$answer" =~ ^[Nn]$ ]]; then
+            if $VERBOSE; then
+                echo "Skipping Oh My Zsh installation."
+            fi
+            return
+        else
+            echo "Please answer Y (yes) or N (no)."
+        fi
+    done
+    fi
+    if $DRY_RUN; then
+        echo "Dry run: Oh My Zsh installation would be performed here."
+    else
+        echo "Installing Oh My Zsh..."
+        sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+        ln -s ~/git/ohmyzsh-mtsh-theme/mtsh.zsh-theme ~/.oh-my-zsh/custom/themes/mtsh.zsh-theme
+        sed -i 's/ZSH_THEME=".*"/ZSH_THEME="mtsh"/' ~/.zshrc
+        echo "Oh My Zsh installed successfully."
+        #enable fzf plugin
+        sed -i 's/plugins=(git)/plugins=(git fzf)/' ~/.zshrc
+        #source bash history to zsh
+        echo "source ~/.fzf.bash" >> ~/.zshrc
+    fi
+}
+
+add_cron_jobs () {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+    else
+    while true; do
+        echo "Do you want to add cron jobs? ([Y]/n)"
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
+            break
+        elif [[ "$answer" =~ ^[Nn]$ ]]; then
+            if $VERBOSE; then
+                echo "Skipping cron jobs addition."
+            fi
+            return
+        else
+            echo "Please answer Y (yes) or N (no)."
+        fi
+    done
+    fi
+    if $DRY_RUN; then
+        echo "Dry run: Cron jobs addition would be performed here."
+    else
+        echo "Adding cron jobs..."
+        (crontab -l 2>/dev/null; echo "*/12 * * * * ~/git/AutoGit-o-Matic/autogit-o-matic.sh --log-file /dev/shm/autogitomatic.log") | crontab -
+        (crontab -l 2>/dev/null; echo "* */4 * * * rm  /dev/shm/autogitomatic.log") | crontab -
+        echo "Cron jobs added successfully."
+    fi
+}
+
+git_dir_and_clone() {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+        return
+    fi
+    while true; do
+        echo "Do you want to clone git repositories? ([Y]/n)"
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
+            break
+        elif [[ "$answer" =~ ^[Nn]$ ]]; then
+            if $VERBOSE; then
+                echo "Skipping git repositories cloning."
+            fi
+            return
+        else
+            echo "Please answer Y (yes) or N (no)."
+        fi
+    done
+    if $DRY_RUN; then
+        echo "Dry run: git repositories cloning would be performed here."
+    else
+        echo "Cloning git repositories..."
+        mkdir ~/git
+        git clone git@github.com:FPGArtktic/GnuRAMage.git ~/git/GnuRAMage
+        git clone git@github.com:FPGArtktic/AutoGit-o-Matic.git ~/git/AutoGit-o-Matic
+        git clone git@github.com:FPGArtktic/setup-DotFiles.git ~/git/setup-DotFiles
+        git clone git@github.com:FPGArtktic/ohmyzsh-mtsh-theme.git ~/git/ohmyzsh-mtsh-theme
+        git clone git@github.com:FPGArtktic/FPGArtktic.github.io.git ~/git/FPGArtktic.github.io
+        cd ~
+        cp ~/setup-DotFiles/autogit-o-matic.ini ~/git/AutoGit-o-Matic/autogit-o-matic.ini
+    fi
+}
+
+probe_os() {
+    if grep -q '^ID=ubuntu$' /etc/os-release && grep -q '^VERSION_ID="24' /etc/os-release; then
+        echo "Ubuntu 24.x"
+        PROBED_OS="ubuntu24"
+    elif grep -q '^ID=arch$' /etc/os-release; then
+        echo "Arch Linux"
+        PROBED_OS="arch"
+    else
+        echo "Only Ubuntu 24.x and Arch Linux is supported by this script."
+        PROBED_OS="unsupported"
+    fi
+}
+
 main() {
     # Parse command line arguments
     parse_arguments "$@"
     if $VERBOSE; then
         welcome 
     fi
-    
-    install_update_and_upgrade
-    install_bashrc
-    install_apt_packages
-    install_sshkey
-    install_vscode
-    install_docker
-    install_fzf
-    install_ram_disk
-    install_tmux
-    install_git_rules
-    install_tailscale
-    post_installation
+    probe_os
+    if [ "$PROBED_OS" = "unsupported" ]; then
+        echo "Exiting setup due to unsupported OS."
+        exit 1
+    fi
+    if [ "$PROBED_OS" = "ubuntu24" ]; then
+        echo "Proceeding with Ubuntu 24.04 setup..."
+            install_ubuntu_update_and_upgrade
+            install_bashrc
+            install_apt_packages
+            install_sshkey
+            install_ubuntu_vscode
+            install_ubuntu_docker
+            install_fzf
+            install_ram_disk
+            install_tmux
+            install_git_rules
+            install_tailscale
+            git_dir_and_clone
+            add_cron_jobs
+            my_zsh_install
+            setup_cli_ai_clients
+            ubuntu_post_installation
+    fi
+    if [ "$PROBED_OS" = "arch" ]; then
+        echo "Arch Linux detected. Exiting setup as this script is for Ubuntu 24.04."
+        install_arch_update_and_upgrade
+        install_bashrc
+        install_yay_packages
+        install_sshkey
+        install_fzf
+        install_ram_disk
+        install_tmux
+        install_git_rules
+        install_tailscale
+        git_dir_and_clone
+        add_cron_jobs
+        oh_my_zsh_install
+        setup_cli_ai_clients
+        arch_post_installation
+    fi
+
 }
 
 # Start the program

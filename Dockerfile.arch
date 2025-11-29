@@ -1,0 +1,18 @@
+# Dockerfile for Arch Linux with user 'mokulanis'
+FROM archlinux:latest
+
+# Install sudo and other essentials
+RUN pacman -Syu --noconfirm sudo \
+    && pacman -Scc --noconfirm
+
+# Create user 'mokulanis' and add to sudoers
+RUN useradd -m -s /bin/bash mokulanis \
+    && echo 'mokulanis ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+RUN pacman -Syu --noconfirm git \
+    && pacman -Scc --noconfirm
+RUN git clone https://github.com/FPGArtktic/setup-DotFiles.git /home/mokulanis/setup-DotFiles
+USER mokulanis
+WORKDIR /home/mokulanis
+
+CMD ["bash"]

@@ -16,3 +16,14 @@ nano
 gnome-disk-utility
 gimp
 openssl
+npm
+zsh
+tmux
+nload
+net-tools
+htop
+atop
+nload
+iotop
+ncdu
+iftop
