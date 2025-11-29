@@ -27,10 +27,11 @@ I was tired of running the same configuration scripts on each of my computers, s
 
 - Automatic installation of essential packages (git, build-essential, curl, etc.)
 - Configuration of git global settings
-- Installation and configuration of productivity tools (tmux, fzf, etc.)
+- Installation and configuration of productivity tools (tmux, fzf, zsh, oh-my-zsh, etc.)
 - Docker installation and configuration
 - RAM disk setup
 - Custom bashrc configuration
+- CLI AI Clients
 
 ## Docker Test Environment
 
