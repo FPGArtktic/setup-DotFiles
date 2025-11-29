@@ -35,7 +35,7 @@ This repository includes a Docker-based test environment that allows you to test
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/.../dotfiles.git
+   git clone https://github.com/FPGArtktic/setup-DotFiles.git
    cd dotfiles
    ```
 
