@@ -469,8 +469,8 @@ setup_cli_ai_clients() {
         echo "Dry run: CLI AI clients installation would be performed here."
     else
         echo "Installing CLI AI clients..."
-        npm install -g @google/gemini-cli@latest
-        npm install -g @github/copilot
+        sudo npm install -g @google/gemini-cli@latest
+        sudo npm install -g @github/copilot
         echo "CLI AI clients installed successfully."
     fi
 }
