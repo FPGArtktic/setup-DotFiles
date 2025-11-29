@@ -530,6 +530,7 @@ my_zsh_install() {
         sed -i 's/plugins=(git)/plugins=(git fzf)/' ~/.zshrc
         #source bash history to zsh
         echo "source ~/.fzf.bash" >> ~/.zshrc
+        sudo chsh -s $(which zsh) $USER
     fi
 }
 
