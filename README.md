@@ -1,4 +1,13 @@
-# setup-dotFiles My personal dotfiles and configuration scripts for Ubuntu/Debian/Arch (arch branch)
+
+# setup-dotFiles
+My personal dotfiles and configuration scripts for Ubuntu 24.04 and Arch Linux.
+
+
+**Update:**
+This project is actively tested and developed only for Ubuntu 24.04 and Arch Linux (arch branch). Other branches (e.g. Debian, other Ubuntu versions) are outdated and will not be maintained.
+
+**Note:**
+Not all features and configurations work inside the Docker container. The container is mainly intended for reviewing the logic of my script and as a base for your own modifications and tests. Feel free to browse the code, adapt it to your needs, and run it on your own system.
 
 <p align="center">
   <img src="img/logo.jpeg" alt="setup-dotFiles" width="500"/>
@@ -8,7 +17,7 @@
 
 ## Overview
 
-This repository contains a comprehensive set of dotfiles and configuration scripts for setting up an Ubuntu 24.04 environment or I added special branch for Arch Linux. It automates the installation and configuration of various tools, packages, and settings to quickly set up a consistent development environment.
+This repository contains a comprehensive set of dotfiles and configuration scripts for setting up an Ubuntu 24.04 or Arch Linux environment. It automates the installation and configuration of various tools, packages, and settings to quickly set up a consistent development environment.
 
 ## Why this project?
 
@@ -25,7 +34,7 @@ I was tired of running the same configuration scripts on each of my computers, s
 
 ## Docker Test Environment
 
-This repository includes a Docker-based test environment that allows you to test the dotfiles and scripts in an isolated Ubuntu 24.04 container without affecting your host system.
+This repository includes a Docker-based test environment that allows you to test the dotfiles and scripts in isolated Ubuntu 24.04 or Arch Linux containers without affecting your host system.
 
 ### Prerequisites
 
@@ -49,7 +58,7 @@ This repository includes a Docker-based test environment that allows you to test
    ```
 
 This will:
-- Build a Docker image based on Ubuntu 24.04
+- Build a Docker image based on Ubuntu 24.04 or Arch Linux
 - Create a container with sudo privileges
 - Mount the current directory to /app in the container
 - Start an interactive bash session
@@ -58,15 +67,15 @@ This will:
 
 When inside the Docker container:
 
-1. You'll be logged in as the user `user` by default
-2. The password for `user` is `user`
-3. You have sudo privileges without needing a password
-4. The dotfiles repository is mounted at `/app`
+1. You'll be logged in as the user `mokulanis` by default
+2. You have sudo privileges without needing a password
+3. The dotfiles repository is available at `/home/mokulanis/setup-DotFiles`
+
 
 To test the dotfiles setup script:
 ```bash
-cd /app
-./setup-dotFile.sh
+cd ~/setup-DotFiles
+./setup-dotFiles.sh
 ```
 
 You can use various flags with the setup script:
@@ -75,30 +84,16 @@ You can use various flags with the setup script:
 - `-y` or `--yes`: Skip all prompts and proceed with default actions
 - `--help`: Show help message
 
+
 ## Installation on Real System
 
-To install these dotfiles on your actual Ubuntu 24.04 system:
+To install these dotfiles on your actual Ubuntu 24.04 or Arch Linux system:
 
 Git clone approach:
 ```bash
-git clone git@github.com:FPGArtktic/setup-DotFiles.git
-cd dotfiles
-./setup-dotFile.sh
-```
-or wget:
-
-```bash
-cd ~
-mkdir dotfiles
-cd dotfiles
-wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/docker_test.sh
-wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/apt-apps.txt
-wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/fzf.bash
-wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/setup-dotFiles.sh
-wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/README.md
-wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/Dockerfile
-wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/bashrc
-wget https://github.com/FPGArtktic/setup-DotFiles/blob/master/tmux.conf
+git clone https://github.com/FPGArtktic/setup-DotFiles.git
+cd setup-DotFiles
+./setup-dotFiles.sh
 ```
 
 
