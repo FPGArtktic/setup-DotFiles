@@ -270,7 +270,7 @@ install_yay_packages() {
             echo "Yay packages installed successfully."
         fi
     fi
-    sudo yay -S --noconfirm $(cat yay-apps.txt)
+    yay -S --noconfirm $(cat yay-apps.txt)
 }
 
 install_ubuntu_docker() {
