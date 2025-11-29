@@ -706,7 +706,7 @@ main() {
             ubuntu_post_installation
     fi
     if [ "$PROBED_OS" = "arch" ]; then
-        echo "Arch Linux detected. Exiting setup as this script is for Ubuntu 24.04."
+        echo "Arch Linux detected. Running Arch-specific setup..."
         install_arch_update_and_upgrade
         install_yay
         install_bashrc
