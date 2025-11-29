@@ -596,6 +596,71 @@ git_dir_and_clone() {
     fi
 }
 
+
+
+install_yay() {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+    else
+    while true; do
+        echo "Do you want to install yay? ([Y]/n)"
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
+            break
+        elif [[ "$answer" =~ ^[Nn]$ ]]; then
+            if $VERBOSE; then
+                echo "Skipping yay installation."
+            fi
+            return
+        else
+            echo "Please answer Y (yes) or N (no)."
+        fi
+    done
+    fi
+    if $DRY_RUN; then
+        echo "Dry run: yay installation would be performed here."
+    else
+        sudo pacman -S --needed git base-devel
+        git clone https://aur.archlinux.org/yay-bin.git
+        cd yay-bin
+        makepkg -si
+        cd -
+        yay -Y --gendb
+        yay -Syu --devel
+        yay -Y --devel --save
+
+    fi
+}
+
+install_virtualbox_configuration() {
+    if $SKIP_SETUP; then
+        echo > /dev/null
+    else
+    while true; do
+        echo "Do you want to install VirtualBox configuration?  ([Y]/n)"
+        read -r answer
+        if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
+            break
+        elif [[ "$answer" =~ ^[Nn]$ ]]; then
+            if $VERBOSE; then
+                echo "Skipping VirtualBox installation."
+            fi
+            return
+        else
+            echo "Please answer Y (yes) or N (no)."
+        fi
+    done
+    fi
+
+    if $DRY_RUN; then
+        echo "Dry run: VirtualBox installation would be performed here."
+    else
+        echo "Installing VirtualBox configuration..."
+        sudo usermod -aG vboxusers  $USER
+    fi
+}
+
+
 probe_os() {
     if grep -q '^ID=ubuntu$' /etc/os-release && grep -q '^VERSION_ID="24' /etc/os-release; then
         echo "Ubuntu 24.x"
@@ -637,11 +702,13 @@ main() {
             add_cron_jobs
             my_zsh_install
             setup_cli_ai_clients
+            install_virtualbox_configuration
             ubuntu_post_installation
     fi
     if [ "$PROBED_OS" = "arch" ]; then
         echo "Arch Linux detected. Exiting setup as this script is for Ubuntu 24.04."
         install_arch_update_and_upgrade
+        install_yay
         install_bashrc
         install_yay_packages
         install_sshkey
@@ -654,6 +721,7 @@ main() {
         add_cron_jobs
         oh_my_zsh_install
         setup_cli_ai_clients
+        install_virtualbox_configuration
         arch_post_installation
     fi
 
