@@ -2,8 +2,10 @@
 
 # Setup fzf
 # ---------
-if [[ ! "$PATH" == */home/$USER/.fzf/bin* ]]; then
-  PATH="${PATH:+${PATH}:}/home/$USER/.fzf/bin"
+# $HOME, not /home/$USER: root lives in /root and service accounts live
+# wherever the admin put them, and the fzf installer always uses $HOME.
+if [[ ":$PATH:" != *":$HOME/.fzf/bin:"* ]]; then
+  PATH="${PATH:+${PATH}:}$HOME/.fzf/bin"
 fi
 
 # FZF options
@@ -65,7 +67,7 @@ export FZF_ALT_C_OPTS="
   --bind 'ctrl-/:change-preview-window(down|hidden|)'
 "
 
-# Ctrl+R - historia poleceń
+# CTRL-R config - command history
 export FZF_CTRL_R_OPTS="
   --preview 'echo {}'
   --preview-window up:3:wrap
@@ -78,7 +80,7 @@ export FZF_CTRL_R_OPTS="
 # fzf-cd - cd to selected directory
 fcd() {
   local dir
-  dir=$(find ${1:-.} -type d 2> /dev/null | fzf +m) && cd "$dir"
+  dir=$(find "${1:-.}" -type d 2> /dev/null | fzf +m) && cd "$dir"
 }
 
 # fzf-open - open file with default editor
@@ -105,21 +107,28 @@ fbr() {
   local branches branch
   branches=$(git --no-pager branch -a) &&
   branch=$(echo "$branches" | fzf +s +m -e) &&
-  git checkout $(echo "$branch" | sed "s:.* remotes/origin/::" | sed "s:.* ::")
+  git checkout "$(echo "$branch" | sed "s:.* remotes/origin/::" | sed "s:.* ::")"
 }
 
 # fzf-kill-process - kill process
 fkill() {
   local pid
   pid=$(ps -ef | sed 1d | fzf -m | awk '{print $2}')
-  if [ "x$pid" != "x" ]; then
-    echo $pid | xargs kill -${1:-9}
+  if [ -n "$pid" ]; then
+    echo "$pid" | xargs kill "-${1:-9}"
   fi
 }
 
-# Bardziej czytelne aliasy
+# Shorthand aliases
 alias fzp="fzf --preview '($FZF_PREVIEW_COMMAND) 2> /dev/null'"
 alias fzd="cd \$(find . -type d | fzf --preview 'ls -la --color=always {}')"
 
-# Evaluate fzf bash completion
-eval "$(fzf --bash)"
+# Key bindings and completion.
+#
+# "fzf --bash" only exists from fzf 0.48. There is deliberately no fallback to
+# ~/.fzf.bash here: setup-dotFiles.sh installs THIS file as ~/.fzf.bash, so
+# sourcing it would be sourcing ourselves. On an older fzf the key bindings
+# simply stay off, which is a missing feature, not a broken shell.
+if command -v fzf >/dev/null 2>&1 && fzf --bash >/dev/null 2>&1; then
+  eval "$(fzf --bash)"
+fi

@@ -1,71 +1,343 @@
+# ---------------------------------------------------------------------------
+# yay-apps.txt - the package set installed by setup-dotFiles.sh on Arch Linux.
+#
+# One package name per line. Blank lines and #-comments are ignored, so
+# annotating this file is free. The reader is:
+#
+#     grep -vE '^[[:space:]]*(#|$)' yay-apps.txt
+#
+# Every surviving name is handed to a single `yay -S` transaction, and yay
+# aborts the WHOLE transaction on one unresolvable name - a single typo here
+# costs you every other package in the file. That is exactly how this list
+# used to fail: `networkmanage` and `signal-deskto` (both typos) meant nothing
+# at all was ever installed. Check a name with `yay -Si <name>` before you add
+# it.
+#
+# Names resolve from the official repositories (core/extra) unless the comment
+# above them says AUR; yay installs from both.
+# ---------------------------------------------------------------------------
+
+# --- base system and core CLI -----------------------------------------------
 base
 base-devel
+binutils
 bash
 bash-completion
-binutils
-calibre
-containerd
-containers-common
-distrobox
+zsh
+# zsh-completions: the extra compdef files that `autoload -U compinit`
+# in zshrc picks up. Ships nothing executable, only completion functions.
+zsh-completions
+less
+tar
+xz
+wget
+rsync
+python
+# curl: install_tailscale() pipes `curl -fsSL https://tailscale.com/install.sh`
+# into a shell. Without curl on PATH that pipeline fails silently, so the tool
+# it depends on is listed explicitly rather than assumed.
+curl
+# openssh: provides ssh-keygen, which install_sshkey() calls. Not part of the
+# `base` metapackage on Arch.
+openssh
+
+# --- kernels and firmware ---------------------------------------------------
+# Four kernels is deliberate on this machine (stock, hardened, LTS, zen).
+# Since VirtualBox went away there is no out-of-tree module left that has to be
+# rebuilt for each of them - KVM is in the kernel itself - so the -headers
+# packages are now only needed if you build DKMS modules of your own. They are
+# kept because compiling anything against a running kernel wants them.
+linux
+linux-headers
+linux-lts
+linux-hardened
+linux-hardened-headers
+linux-hardened-docs
+linux-zen
+linux-firmware
+linux-firmware-intel
+
+# --- editors and terminal ---------------------------------------------------
+# neovim is THE editor of this configuration: the whole .config/nvim tree
+# (LazyVim plus the dotfiles-* plugin specs) is written for it, and
+# bashrc/zshrc point EDITOR, VISUAL and MANPAGER at nvim whenever it is on
+# PATH. vim stays as the fallback for a system that has not run the setup.
+neovim
+vim
+vim-runtime
+# nano: the editor of last resort, and what visudo/sudoedit fall back to.
+nano
+tmux
+mc
+
+# --- development ------------------------------------------------------------
+git
+# lazygit: [extra]. Terminal UI for git, one of the three tools requested.
+lazygit
+# visual-studio-code-bin: AUR. The Microsoft-branded build; the OSS build in
+# [extra] is called `code` and lacks the marketplace and telemetry.
+visual-studio-code-bin
+
+# --- containers and application sandboxing ----------------------------------
 docker
 docker-buildx
 docker-compose
-docker-machine
-git
-gnome-disk-utility
-keepass
-less
-flatpak
-linux
-linux-firmware
-linux-firmware-intel
-linux-hardened
-linux-hardened-docs
-linux-hardened-headers
-linux-headers
-linux-lts
-linux-zen
-iw
-iwd
-mc
-microsoft-edge-dev-bin
-network-manager-applet
-networkmanage
-networkmanager-openvpn
-networkmanager-qt
-networkmanager-vpn-plugin-openvpn
+containerd
+containers-common
 podman
 podman-compose
 podman-desktop
-python
-signal-deskto
-tar
-telegram-desktop
-thunderbird
-veracrypt
-vim
-vim-runtime
-virtualbox
-virtualbox-host-dkms
-visual-studio-code-bin
-vlc
-wget
+# podman-tui: AUR. This is the closest thing to a "lazypodman" - no package,
+# repository or upstream project by that name exists anywhere, so do not go
+# looking for it. lazydocker (below) also drives podman perfectly well once
+# DOCKER_HOST points at the podman socket.
+podman-tui
+# lazydocker: [extra]. Terminal UI for docker, and for podman via DOCKER_HOST.
+lazydocker
+distrobox
+flatpak
+# docker-machine was deprecated and archived upstream in 2021 - `docker
+# compose` v2 (the docker-compose package above) and `podman machine` do its
+# job now. It still builds and still lives in [extra], and it was on this list
+# from the start, so it stays. Delete the line if you no longer drive a legacy
+# VM-backed engine with it.
+docker-machine
+
+# --- virtualisation: KVM / QEMU / libvirt -----------------------------------
+# VirtualBox was replaced by the native stack. VirtualBox needs an out-of-tree
+# DKMS module rebuilt against every kernel you keep - and this list keeps four
+# of them - while KVM is already in the kernel, so nothing has to be compiled
+# and nothing breaks on a kernel upgrade.
+#
+# Membership of the "libvirt" group is what grants passwordless access:
+# /usr/share/polkit-1/rules.d/50-libvirt.rules keys off exactly that group and
+# nothing else. The setup script adds you to it; it takes effect on the next
+# login.
+libvirt
+# qemu-full rather than qemu-base: it brings every architecture, the audio and
+# SPICE backends and qemu-img. qemu-base alone gives you x86 with no sound and
+# no display, which looks like a broken installation rather than a choice.
+qemu-full
+# The GUI, and the viewer virt-manager opens consoles with. virt-install comes
+# with virt-manager and drives the same thing from the command line.
+virt-manager
+virt-viewer
+# REQUIRED for the default NAT network. Without dnsmasq libvirt starts, the
+# "default" network refuses to come up, and every new guest lands with no
+# network at all - a failure that reads as a guest problem, not a host one.
+dnsmasq
+# UEFI firmware for guests. Anything modern - Windows 11, current Fedora,
+# Secure Boot - expects UEFI rather than the SeaBIOS default.
+edk2-ovmf
+# Software TPM. Windows 11 refuses to install without a TPM 2.0 device.
+swtpm
+# libvirt reads host hardware details through it; without it the capability
+# report is thinner and virt-manager guesses worse.
+dmidecode
+# OS detection in virt-manager: picks sane defaults for disk bus, network model
+# and firmware per guest OS instead of falling back to the slow ones.
+libosinfo
+osinfo-db
+# --- sharing a directory with a guest ---------------------------------------
+# There are two mechanisms and they are not interchangeable; VirtualBox's
+# single "shared folder" checkbox hid that distinction.
+#
+# 1. virtiofs - the fast one, a real filesystem passed through to the guest.
+#    Host side is virtiofsd; the guest needs nothing beyond a kernel with the
+#    virtiofs driver, which every current distribution has. Configure it in
+#    virt-manager as Add Hardware -> Filesystem, driver virtiofs.
+virtiofsd
+# 2. SPICE folder sharing - slower, but works without touching the guest's
+#    hardware definition and survives a running machine. phodav is the WebDAV
+#    server; on Arch the guest-side daemon, spice-webdavd, ships INSIDE this
+#    same package, so there is no separate spice-webdavd to install.
+#    virt-manager exposes it as "Redirect folder".
+phodav
+#
+# Guest-side only, listed here for reference rather than installed: install
+# spice-vdagent in the guest for clipboard sharing and display auto-resize,
+# and qemu-guest-agent for a clean shutdown and IP reporting to the host.
+# Needed for qemu+ssh:// connections to a remote libvirt host.
+openbsd-netcat
+#
+# Deliberately NOT here:
+#   iptables-nft   - it is a "provides" of the iptables package that is already
+#                    on every Arch system; naming it would only invite a
+#                    replace-iptables prompt in the middle of the transaction.
+#   bridge-utils   - gone from the Arch repositories; iproute2 does the job.
+#   guestfs-tools  - genuinely useful for poking inside guest images, but it
+#                    drags in a large appliance. Add it if you need it.
+
+# --- remote and shared filesystems ------------------------------------------
+# These were installed by hand on this machine but never made it onto the
+# list, so a rebuild would have silently dropped them.
+# SMB/CIFS shares in the file manager, and on the command line with
+# `mount -t cifs`.
+gvfs-smb
+cifs-utils
+# Cloud storage mounted like a directory (`rclone mount`).
+rclone
+
+# --- networking -------------------------------------------------------------
+# networkmanager was spelled "networkmanage" here, which exists nowhere and
+# aborted the entire yay transaction. Fixed.
+networkmanager
+network-manager-applet
+networkmanager-openvpn
+networkmanager-qt
+networkmanager-vpn-plugin-openvpn
+iw
+iwd
 wireless_tools
 wpa_supplicant
-xz
-zsh
-tmux
-nload
 net-tools
+# Note: `tailscale` is a normal [extra] package. It is intentionally NOT in
+# this list because setup-dotFiles.sh asks about Tailscale as a separate,
+# opt-in step; that step should install it with pacman rather than piping a
+# remote installer into a root shell.
+
+# --- monitoring and diagnostics ---------------------------------------------
 htop
 atop
-nload
+glances
 iotop
-ncdu
 iftop
 nethogs
-glances
-usbguard
-rsync
+# nload was listed twice in the original file; once is enough.
+nload
+ncdu
+
+# --- filesystems, disks and storage -----------------------------------------
+# exfatprogs replaces exfat-utils, which was listed here before: exfat-utils is
+# the old FUSE implementation, deprecated upstream in favour of the in-kernel
+# exFAT driver that exfatprogs is built for.
+exfatprogs
 grub-btrfs
-exfat-utils
+gnome-disk-utility
+
+# --- security and privacy ---------------------------------------------------
+keepass
+veracrypt
+usbguard
+
+# --- desktop applications ---------------------------------------------------
+calibre
+signal-desktop
+telegram-desktop
+thunderbird
+vlc
+# microsoft-edge-dev-bin: AUR. The dev channel of Edge; there is no official
+# repository package for any Edge channel.
+microsoft-edge-dev-bin
+
+# ===========================================================================
+#  Shared developer environment
+#
+#  Everything from here down mirrors packages/pacman.txt and packages/aur.txt
+#  of the podman_base project. The Neovim, bash, zsh and tmux configuration in
+#  this repository IS podman_base's configuration - the only difference is that
+#  this host has internet, so plugins, language servers and parsers are fetched
+#  at runtime instead of being baked into an image. The programs those configs
+#  call still have to exist locally, and that is what this block installs.
+#
+#  So: these are not "nice to have" desktop tools. Each one is here because a
+#  dotfile in this repository invokes it. Where that is not obvious - and
+#  `tree-sitter-cli` on a desktop machine is definitely not obvious - the
+#  section comment says which config file needs it and why.
+# ===========================================================================
+
+# --- toolchain and build ----------------------------------------------------
+# base-devel and binutils are already listed in the base system section above.
+# The rest is what nvim-treesitter needs in order to COMPILE a parser: every
+# parser install runs the tree-sitter CLI and then a C compiler over the
+# generated source. cmake and pkgconf are pulled in by the handful of Mason
+# packages that build from source rather than shipping a prebuilt binary.
+gcc
+make
+cmake
+pkgconf
+
+# --- CLI tools the shell configuration expects ------------------------------
+# bashrc and zshrc alias ls to eza, cat to bat and htop to btop, and wire fzf
+# into both shells. Every one of those aliases is guarded by `command -v`, so a
+# missing tool degrades quietly instead of erroring - which is precisely the
+# problem: you get plain `ls` and no warning that the configuration you asked
+# for is not the one you are running.
+ripgrep
+fd
+bat
+eza
+# git-delta: the syntax-highlighting pager for git diffs that comes with this
+# tool set; `git config core.pager delta` is the point of installing it.
+git-delta
+btop
+fzf
+jq
+tree
+lynx
+# superfile: TUI file manager, the modern counterpart to mc above.
+superfile
+shellcheck
+# man-db and man-pages: bashrc/zshrc set MANPAGER='nvim +Man!', which needs
+# actual man pages and a working `man` underneath it to page anything.
+man-db
+man-pages
+which
+diffutils
+procps-ng
+psmisc
+inetutils
+ca-certificates
+gnupg
+
+# --- system fetch on shell start --------------------------------------------
+# The login greeting in bashrc/zshrc runs fastfetch, and falls back to neofetch
+# when fastfetch is missing (it is guarded by DOTFILES_NO_FETCH).
+fastfetch
+# neofetch: AUR. Archived by its author in 2024 and dropped from the official
+# Arch repositories, so the AUR package is the only way to get the real thing.
+neofetch
+
+# --- archives ---------------------------------------------------------------
+# tar and xz are already listed in the base system section above.
+gzip
+zip
+unzip
+zstd
+
+# --- language runtimes for Neovim (LSP servers, parsers, providers) ---------
+# These are NOT here for their own sake - they are what the Neovim setup runs
+# on. Mason installs lua-language-server, bash-language-server, basedpyright,
+# json-lsp, yaml-language-server, typescript-language-server, clangd, stylua,
+# shfmt and ruff. The JSON, YAML, TypeScript and Bash servers are npm packages,
+# so nodejs and npm have to exist before Mason can install a single one of
+# them; several formatters and debug adapters are Go or Python programs, hence
+# go, python and python-pip.
+#
+# python-pynvim is Neovim's Python provider - without it `:checkhealth provider`
+# reports a broken host program and any Python remote plugin refuses to load.
+#
+# tree-sitter and tree-sitter-cli generate and compile the parser list the
+# Neovim configuration declares (bash, c, cpp, css, diff, dockerfile,
+# git_config, gitcommit, gitignore, go, html, javascript, json, lua, luadoc,
+# make, markdown, markdown_inline, printf, python, query, regex, rust, sql,
+# toml, tsx, typescript, vim, vimdoc, xml, yaml). THAT is why a desktop machine
+# ends up carrying a parser generator.
+#
+# python is already listed in the base system section above.
+python-pip
+python-pynvim
+nodejs
+npm
+go
+tree-sitter
+tree-sitter-cli
+
+# --- clipboard bridges ------------------------------------------------------
+# The Neovim options set clipboard=unnamedplus, which delegates every yank to
+# an external clipboard tool. Without one of these, yanking in nvim never
+# reaches the system clipboard and the failure is silent. wl-clipboard covers
+# Wayland sessions, xclip covers X11; installing both means the configuration
+# works whichever session the machine boots into.
+wl-clipboard
+xclip

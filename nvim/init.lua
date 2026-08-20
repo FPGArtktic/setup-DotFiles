@@ -1,0 +1,23 @@
+-- ===========================================================================
+--  setup-DotFiles :: Neovim entry point
+--
+--  This is the LazyVim starter's init.lua, kept as a real file in the repo.
+--
+--  In podman_base the same file arrives by cloning LazyVim/starter into the
+--  image at build time (`rsync -a --ignore-existing`, so the starter only
+--  fills in what the image's own tree does not already provide). A host
+--  install has no build step, so the one file the starter contributes that we
+--  actually need - this bootstrap line - is checked in here instead. The
+--  behaviour is identical; nothing else from the starter is required.
+--
+--  Everything else lives in:
+--      lua/config/lazy.lua       - lazy.nvim bootstrap and setup
+--      lua/config/options.lua    - editor options (loaded by LazyVim first)
+--      lua/plugins/*.lua         - plugin specs, merged into the LazyVim spec
+--
+--  lua/config/autocmds.lua and lua/config/keymaps.lua are optional: LazyVim
+--  only loads them when they exist, so add them when you want them.
+-- ===========================================================================
+
+-- bootstrap lazy.nvim, LazyVim and your plugins
+require("config.lazy")
