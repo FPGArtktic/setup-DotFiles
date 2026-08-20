@@ -263,10 +263,52 @@ run() {
 # Render an argv the way it would have to be typed, so that a dry-run line can
 # be copied straight into a shell: an argument with spaces in it is a single
 # argument here and has to stay one there.
+# opt_value - the value of an option that takes one, or a hard stop.
+#
+# "${2:?...}" only fires when $2 is unset or empty, and the following option is
+# neither. That made `--git-email --dry-run` set the address to "--dry-run" and
+# then perform a LIVE run, with the mode line reading "live" in the middle of a
+# rehearsal nobody wanted to be real. Anything starting with "-" is therefore
+# rejected here; a value that genuinely starts with a dash can still be passed
+# as `--git-name=-weird` style input, which this script does not accept anyway.
+opt_value() {
+    local flag="$1" value="${2-}"
+    case "$value" in
+        ''|-*)
+            err "$flag needs a value (got '${value:-nothing}')"
+            hint "did you mean:  $flag VALUE $value"
+            return 1
+            ;;
+    esac
+    printf '%s' "$value"
+}
+
+# ok_did - report a mutation that actually happened.
+#
+# Plain `ok` after a `run` is a lie during a rehearsal: --dry-run printed
+# "would run: systemctl enable --now docker.service" and then "ok
+# docker.service enabled and started", so the one thing the user came to check
+# - what WOULD change - was reported as already done. Under --dry-run this
+# says "would" instead, and the wording is the only difference.
+ok_did() {
+    if [ "$DRY_RUN" = "1" ]; then
+        printf '%s dry%s would: %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2
+    else
+        ok "$*"
+    fi
+}
+
 quoted() {
     local a out=""
     for a in "$@"; do
         case "$a" in
+            # An empty argument matches none of the "contains something
+            # unusual" patterns below, so without this arm it would be
+            # appended as nothing at all and the printed command line would
+            # have one argument fewer than the real one. That matters most for
+            # `ssh-keygen -N "" ...`, where a pasted line would make -f the
+            # passphrase.
+            '')                       out+=" ''" ;;
             *\'*)                     out+=" $(printf '%q' "$a")" ;;
             *[![:alnum:]_@%+=:,./-]*) out+=" '$a'" ;;
             *)                        out+=" $a" ;;
@@ -360,6 +402,24 @@ install_file() {
         dbg "$dst is already up to date"
         return 0
     fi
+
+    # A symlinked destination is somebody's own dotfiles repository driving
+    # this path. Plain `cp` follows the link and overwrites the file at the
+    # far end - a tracked file in another repository, with the backup landing
+    # next to the link rather than next to what was actually clobbered. Say
+    # what is going on and replace the link instead, so the damage is confined
+    # to this file and the original stays where its owner put it.
+    if [ -L "$dst" ]; then
+        local target
+        target="$(readlink -f "$dst" 2>/dev/null || readlink "$dst")"
+        warn "$dst is a symlink to $target"
+        hint "replacing the link itself; $target is left untouched"
+        hint "if that link is your own dotfiles repository, answer n next time"
+        run rm -f "$dst" || return 1
+        run cp "$src" "$dst"
+        return
+    fi
+
     if [ -e "$dst" ]; then
         local backup
         backup="$dst.bak.$(date +%Y%m%d-%H%M%S)"
@@ -432,6 +492,31 @@ rc_block() (
         if ! grep -q "^# >>> $BLOCK_TAG: " "$target" && [ ! -f "$target.orig.$BLOCK_TAG" ]; then
             cp -p "$target" "$target.orig.$BLOCK_TAG" || return 1
         fi
+
+        # A begin marker with no matching end marker is the dangerous case:
+        # the filter below would drop everything from the marker to the end of
+        # the file, and the pristine-copy guard above does NOT fire, because a
+        # managed marker IS present. Somebody who deleted the closing line by
+        # hand would lose the rest of their rc file with no way back. Refuse
+        # instead, and say exactly which line to look at.
+        if grep -qxF "$begin" "$target" && ! grep -qxF "$end" "$target"; then
+            err "$target has the opening marker of the '$name' block but not its end"
+            hint "opening line: $begin"
+            hint "expected end: $end"
+            hint "restore the end line, or delete the opening one, then run again"
+            return 1
+        fi
+
+        # Refuse a truncated file for the same reason: an end marker with no
+        # begin cannot be matched up either.
+        if grep -qxF "$end" "$target" && ! grep -qxF "$begin" "$target"; then
+            err "$target has the end marker of the '$name' block but not its start"
+            hint "delete the stray line: $end"
+            return 1
+        fi
+
+        # Both markers present or neither: the filter is safe now. skip is
+        # reset by the end marker, which the check above proved is there.
         awk -v b="$begin" -v e="$end" '
             $0 == b { skip = 1 }
             skip == 0 { print }
@@ -633,8 +718,8 @@ parse_arguments() {
             -y|--yes)     ASSUME_YES=1; shift ;;
             --chsh)       CHSH_MODE=yes; shift ;;
             --no-chsh)    CHSH_MODE=no; shift ;;
-            --git-name)   GIT_AUTHOR="${2:?--git-name needs a name}"; shift 2 ;;
-            --git-email)  GIT_EMAIL="${2:?--git-email needs an address}"; shift 2 ;;
+            --git-name)   GIT_AUTHOR="$(opt_value "$1" "${2-}")" || exit 1; shift 2 ;;
+            --git-email)  GIT_EMAIL="$(opt_value "$1" "${2-}")" || exit 1; shift 2 ;;
             -V|--version) version; exit 0 ;;
             -h|--help)    usage; exit 0 ;;
             --)           shift; break ;;
@@ -692,6 +777,23 @@ preflight() {
         err "sudo not found - the package steps cannot run"
         problems=$((problems + 1))
     fi
+
+    # git and ssh-keygen are called directly by later steps. Without this
+    # check the run gets as far as the question, the user answers Y, and bash
+    # reports "line 197: ssh-keygen: command not found" - a diagnostic that
+    # points at the runner helper rather than at the missing package.
+    local tool pkg missing=0
+    for tool in git:git ssh-keygen:openssh; do
+        pkg="${tool#*:}"; tool="${tool%%:*}"
+        if have "$tool"; then
+            dbg "$tool found"
+        else
+            warn "$tool is missing - the steps that need it will be skipped"
+            hint "it comes from the '$pkg' package, which is on $PKG_LIST"
+            missing=$((missing + 1))
+        fi
+    done
+    [ "$missing" -eq 0 ] || hint "the package step installs them; re-run afterwards"
 
     local f missing=0 total=0
     for f in "$BASHRC_SRC" "$ZSHRC_SRC" "$BASH_PROFILE_SRC" "$FZF_SRC" \
@@ -755,7 +857,7 @@ install_update_and_upgrade() {
     run sudo pacman -S --needed "${nc[@]}" -- fastfetch \
         || warn "fastfetch not installed (cosmetic only, continuing)"
 
-    ok "system updated"
+    ok_did "system updated"
     completed
 }
 
@@ -786,7 +888,7 @@ install_bashrc() {
         err "could not update $HOME/.bashrc"
         return 1
     fi
-    ok "bash configuration installed"
+    ok_did "bash configuration installed"
     hint "your own additions belong in ~/.bashrc.local - it is sourced last"
     hint "and is never written to by this script"
     hint "run 'source ~/.bashrc' or open a new terminal to pick it up"
@@ -824,6 +926,7 @@ install_bash_profile() {
         # bash would have used - which, with a hand-written ~/.bash_profile in
         # place, bash was NOT using. Worth saying out loud once.
         if [ -f "$HOME/.profile" ] || [ -f "$HOME/.bash_login" ]; then
+            # shellcheck disable=SC2088  # a message about the path, not the path
             warn "~/.profile (or ~/.bash_login) will now be read as well"
             hint "it was shadowed by your ~/.bash_profile until now"
         fi
@@ -833,7 +936,7 @@ install_bash_profile() {
         err "could not update $target"
         return 1
     fi
-    ok "bash login-shell configuration installed"
+    ok_did "bash login-shell configuration installed"
     # zsh needs no counterpart: it reads ~/.zshrc for every interactive shell,
     # login or not, so the zsh step below covers both cases on its own.
     completed
@@ -929,7 +1032,7 @@ install_yay_packages() {
     fi
 
     if run yay "${yflags[@]}" -- "${pkgs[@]}"; then
-        ok "packages installed"
+        ok_did "packages installed"
         completed
         return 0
     fi
@@ -998,7 +1101,7 @@ install_zsh() {
         err "could not update $zshrc"
         return 1
     fi
-    ok "zsh configuration installed"
+    ok_did "zsh configuration installed"
     hint "your own additions belong in ~/.zshrc.local - it is sourced last"
     hint "and is never written to by this script"
 
@@ -1188,7 +1291,13 @@ install_sshkey() {
 
     confirm "Generate an ed25519 SSH key?" y || { skipped; return 0; }
 
-    local comment="${GIT_EMAIL:-$GIT_EMAIL_DEFAULT}"
+    # The comment is baked into the public key and travels with it to every
+    # host it is pasted into, so it must not be the maintainer's address. Use
+    # what git already knows about this machine, and fall back to
+    # user@hostname rather than to a stranger's mailbox.
+    local comment
+    comment="${GIT_EMAIL:-$(git config --global user.email 2>/dev/null || true)}"
+    comment="${comment:-$USER_NAME@$(uname -n 2>/dev/null || echo localhost)}"
     local -a args=(-t ed25519 -C "$comment" -f "$key")
     if [ "$ASSUME_YES" = "1" ]; then
         # ssh-keygen asks for a passphrase twice; an unattended run would hang
@@ -1203,7 +1312,7 @@ install_sshkey() {
         err "ssh-keygen failed"
         return 1
     fi
-    ok "SSH key generated at $key"
+    ok_did "SSH key generated at $key"
     # These hints used to be hidden from --yes users, who are precisely the
     # ones with no chance of having read them during the run.
     hint "add the public key to GitHub: https://github.com/settings/keys"
@@ -1254,7 +1363,7 @@ install_docker_configuration() {
         # containerd separately is redundant.
         run sudo systemctl enable --now docker.service \
             || { err "could not enable docker.service"; return 1; }
-        ok "docker.service enabled and started"
+        ok_did "docker.service enabled and started"
     fi
     completed
 }
@@ -1337,7 +1446,7 @@ install_libvirt_configuration() {
     else
         run sudo systemctl enable --now libvirtd.socket \
             || { err "could not enable libvirtd.socket"; return 1; }
-        ok "libvirtd.socket enabled and started"
+        ok_did "libvirtd.socket enabled and started"
     fi
 
     # --- 4. the default network --------------------------------------------
@@ -1370,7 +1479,7 @@ install_libvirt_configuration() {
         fi
     fi
 
-    ok "libvirt configuration applied"
+    ok_did "libvirt configuration applied"
     hint "virt-manager connects to qemu:///system; UEFI guests need edk2-ovmf"
     hint "and Windows 11 needs swtpm, both on the package list"
     completed
@@ -1420,7 +1529,7 @@ install_fzf() {
     fi
     # zsh does not read ~/.fzf.bash at all - it is bash syntax. The zshrc in
     # this repository sources fzf's own zsh integration instead.
-    ok "fzf configuration installed"
+    ok_did "fzf configuration installed"
     completed
 }
 
@@ -1462,7 +1571,7 @@ install_tmux() {
     need_file "$TMUX_SRC" || return 1
 
     install_file "$TMUX_SRC" "$HOME/.tmux.conf" || { err "could not install ~/.tmux.conf"; return 1; }
-    ok "tmux configuration installed"
+    ok_did "tmux configuration installed"
     if ! have tmux; then
         warn "tmux itself is not installed yet - the config waits for it"
         hint "tmux comes from $PKG_LIST"
@@ -1540,7 +1649,8 @@ install_neovim() {
         # the directory) rather than a wipe, so a lua/plugins/my-plugins.lua
         # that this repository knows nothing about survives a reinstall.
         if [ -e "$NVIM_DEST" ]; then
-            local backup="$NVIM_DEST.bak.$(date +%Y%m%d-%H%M%S)"
+            local backup
+            backup="$NVIM_DEST.bak.$(date +%Y%m%d-%H%M%S)"
             warn "$(tilde "$NVIM_DEST") exists and differs - copying it to $(tilde "$backup")"
             run cp -a "$NVIM_DEST" "$backup" || { err "could not back up $NVIM_DEST"; return 1; }
         fi
@@ -1637,16 +1747,47 @@ install_git_rules() {
     cur_name="$(git config --global user.name 2>/dev/null || true)"
     cur_email="$(git config --global user.email 2>/dev/null || true)"
 
-    # flags/environment > what is already configured > the built-in default.
-    local want_name="${GIT_AUTHOR:-${cur_name:-$GIT_AUTHOR_DEFAULT}}"
-    local want_email="${GIT_EMAIL:-${cur_email:-$GIT_EMAIL_DEFAULT}}"
+    # Flags and environment first, then whatever is already configured. The
+    # built-in default comes last and is treated as a separate case, because
+    # it is the MAINTAINER's identity in a public repository: falling back to
+    # it silently makes a stranger commit as somebody else, and their mail and
+    # their GitHub attribution go to that somebody else too.
+    local want_name="${GIT_AUTHOR:-$cur_name}"
+    local want_email="${GIT_EMAIL:-$cur_email}"
+    local using_builtin=0
+    if [ -z "$want_name" ] || [ -z "$want_email" ]; then
+        using_builtin=1
+        want_name="${want_name:-$GIT_AUTHOR_DEFAULT}"
+        want_email="${want_email:-$GIT_EMAIL_DEFAULT}"
+    fi
 
     step "user.name ....... $want_name"
     step "user.email ...... $want_email"
     step "core.fileMode ... false (global, for every repository on this machine)"
 
-    if [ -n "$cur_name" ] && [ "$cur_name" != "$want_name" ]; then
-        warn "this replaces the configured identity: $cur_name <$cur_email>"
+    if [ "$using_builtin" = "1" ]; then
+        warn "that identity is this repository's built-in default, not yours"
+        hint "it is the author's own name and address; every commit you make"
+        hint "would carry them. Pass --git-name 'Your Name' and"
+        hint "--git-email you@example.org, or set them with git config first."
+        # An unattended run has nobody to read the warning, so it does the one
+        # safe thing instead: configure core.fileMode and leave the identity
+        # alone rather than stamping the maintainer's onto this machine.
+        if [ "$ASSUME_YES" = "1" ]; then
+            warn "--yes: leaving user.name and user.email alone"
+            run git config --global core.fileMode false || {
+                err "git config core.fileMode failed"; return 1; }
+            ok_did "core.fileMode set; identity untouched"
+            completed
+            return 0
+        fi
+    fi
+
+    # Warn when EITHER field changes, not just the name. A half-configured
+    # machine - name set, address not - used to be "changed" without a word.
+    if { [ -n "$cur_name" ] && [ "$cur_name" != "$want_name" ]; } ||
+       { [ -n "$cur_email" ] && [ "$cur_email" != "$want_email" ]; }; then
+        warn "this replaces the configured identity: ${cur_name:-(unset)} <${cur_email:-(unset)}>"
         hint "pass --git-name/--git-email, or answer n to keep what you have"
     fi
     confirm "Apply this global git configuration?" y || { skipped; return 0; }
@@ -1659,7 +1800,7 @@ install_git_rules() {
         err "at least one git config call failed"
         return 1
     fi
-    ok "global git configuration applied"
+    ok_did "global git configuration applied"
     if [ "$VERBOSE" = "1" ]; then
         git config --global --list 2>/dev/null | sed 's/^/     /' >&2 || true
     fi
@@ -1690,7 +1831,7 @@ install_tailscale() {
     else
         run sudo systemctl enable --now tailscaled \
             || { err "could not enable tailscaled"; return 1; }
-        ok "tailscaled enabled and started"
+        ok_did "tailscaled enabled and started"
     fi
     # Installing tailscale does not connect it, and the old version never said so.
     hint "connect the machine with: sudo tailscale up"
@@ -1723,7 +1864,7 @@ post_installation() {
         run sudo pacman -Sc --noconfirm || warn "could not trim the package cache"
     fi
 
-    ok "post-installation finished"
+    ok_did "post-installation finished"
     hint "review orphans with: pacman -Qtdq"
     hint "restart your terminal, or run 'source ~/.bashrc', to apply the changes"
     completed
@@ -1735,7 +1876,14 @@ post_installation() {
 summary() {
     printf '\n' >&2
     printf '%sSummary%s\n' "$C_BOLD" "$C_RESET" >&2
-    printf '  completed ....... %s\n' "${STEPS_DONE[*]:-none}" >&2
+    # "completed" is a claim about the machine, and during a rehearsal nothing
+    # was completed at all. The trailing warning said so, but by then the
+    # reader has already taken the word at face value.
+    if [ "$DRY_RUN" = "1" ]; then
+        printf '  would run ....... %s\n' "${STEPS_DONE[*]:-none}" >&2
+    else
+        printf '  completed ....... %s\n' "${STEPS_DONE[*]:-none}" >&2
+    fi
     printf '  skipped ......... %s\n' "${STEPS_SKIPPED[*]:-none}" >&2
     printf '  failed .......... %s\n' "${STEPS_FAILED[*]:-none}" >&2
     if [ "$DRY_RUN" = "1" ]; then
