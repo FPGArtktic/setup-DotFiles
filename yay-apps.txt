@@ -79,29 +79,18 @@ lazygit
 visual-studio-code-bin
 
 # --- containers and application sandboxing ----------------------------------
-docker
-docker-buildx
-docker-compose
-containerd
-containers-common
+# podman only, no docker. podman is rootless and daemonless: there is no
+# service to enable and no "docker" group, whose membership is equivalent to
+# passwordless root. bashrc and zshrc alias docker to podman and docker-compose
+# to podman-compose, so old commands and notes keep working.
 podman
 podman-compose
 podman-desktop
-# podman-tui: AUR. This is the closest thing to a "lazypodman" - no package,
-# repository or upstream project by that name exists anywhere, so do not go
-# looking for it. lazydocker (below) also drives podman perfectly well once
-# DOCKER_HOST points at the podman socket.
+containers-common
+# podman-tui: AUR. Terminal UI for podman.
 podman-tui
-# lazydocker: [extra]. Terminal UI for docker, and for podman via DOCKER_HOST.
-lazydocker
 distrobox
 flatpak
-# docker-machine was deprecated and archived upstream in 2021 - `docker
-# compose` v2 (the docker-compose package above) and `podman machine` do its
-# job now. It still builds and still lives in [extra], and it was on this list
-# from the start, so it stays. Delete the line if you no longer drive a legacy
-# VM-backed engine with it.
-docker-machine
 
 # --- virtualisation: KVM / QEMU / libvirt -----------------------------------
 # VirtualBox was replaced by the native stack. VirtualBox needs an out-of-tree

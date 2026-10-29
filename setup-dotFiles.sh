@@ -50,7 +50,7 @@ SCRIPT_NAME="$(basename "$SCRIPT_PATH")"
 
 # --- identity of the machine we are running on RIGHT NOW ---------------------
 # $USER is not set under cron, `su`, `env -i` or some container shells, and an
-# empty expansion would silently turn `usermod -aG docker $USER` into a
+# empty expansion would silently turn `usermod -aG libvirt $USER` into a
 # missing-operand error. id -un always answers.
 USER_NAME="${USER:-$(id -un)}"
 
@@ -286,8 +286,8 @@ opt_value() {
 # ok_did - report a mutation that actually happened.
 #
 # Plain `ok` after a `run` is a lie during a rehearsal: --dry-run printed
-# "would run: systemctl enable --now docker.service" and then "ok
-# docker.service enabled and started", so the one thing the user came to check
+# "would run: systemctl enable --now tailscaled" and then "ok
+# tailscaled enabled and started", so the one thing the user came to check
 # - what WOULD change - was reported as already done. Under --dry-run this
 # says "would" instead, and the wording is the only difference.
 ok_did() {
@@ -357,7 +357,6 @@ need_file() {
 # rather than reporting a failure the test environment cannot avoid.
 in_container() {
     [ -f /run/.containerenv ] && return 0
-    [ -f /.dockerenv ] && return 0
     grep -qa 'container=' /proc/1/environ 2>/dev/null && return 0
     return 1
 }
@@ -636,7 +635,6 @@ ${C_BOLD}steps, in order${C_RESET}
                   zsh-autosuggestions, zsh-syntax-highlighting, fzf-tab and
                   the mtsh theme; offers to change the login shell
   ssh key         an ed25519 key, only when there is none
-  docker          docker group membership and docker.service
   libvirt         libvirt group membership, libvirtd.socket and the
                   default guest network
   fzf             fzf.bash -> ~/.fzf.bash, plus the shell integration
@@ -1323,51 +1321,6 @@ install_sshkey() {
     completed
 }
 
-# 8. Docker group membership and the service.
-install_docker_configuration() {
-    log "Docker configuration"
-    if ! have docker; then
-        warn "docker is not installed - nothing to configure"
-        hint "docker comes from $PKG_LIST; run the package step first"
-        skipped
-        return 0
-    fi
-
-    warn "membership of the docker group is equivalent to passwordless root"
-    hint "anyone in it can mount / into a container and edit anything"
-    confirm "Add $USER_NAME to the docker group and enable the service?" y \
-        || { skipped; return 0; }
-    ensure_sudo || return 1
-
-    # groupadd returns 9 when the group exists, which under `set -e` would end
-    # the run; the group is usually created by the docker package anyway.
-    if getent group docker >/dev/null 2>&1; then
-        dbg "group docker already exists"
-    else
-        run sudo groupadd docker || { err "groupadd docker failed"; return 1; }
-    fi
-
-    if id -nG "$USER_NAME" 2>/dev/null | grep -qw docker; then
-        ok "$USER_NAME is already in the docker group"
-    else
-        run sudo usermod -aG docker "$USER_NAME" \
-            || { err "could not add $USER_NAME to the docker group"; return 1; }
-        warn "group membership only applies to new logins"
-        hint "run 'newgrp docker' or log out and back in"
-    fi
-
-    if in_container || ! have_systemd; then
-        warn "no systemd here - not enabling docker.service"
-    else
-        # docker.service pulls in containerd itself on Arch, so enabling
-        # containerd separately is redundant.
-        run sudo systemctl enable --now docker.service \
-            || { err "could not enable docker.service"; return 1; }
-        ok_did "docker.service enabled and started"
-    fi
-    completed
-}
-
 # 9. libvirt / KVM: group membership, the socket, and the default network.
 #
 # Replaces the VirtualBox step. The two are not configured the same way and the
@@ -1927,7 +1880,6 @@ main() {
     do_step "packages"      install_yay_packages
     do_step "zsh"           install_zsh
     do_step "ssh key"       install_sshkey
-    do_step "docker"        install_docker_configuration
     do_step "libvirt"       install_libvirt_configuration
     do_step "fzf"           install_fzf
     do_step "ram disk"      install_ram_disk

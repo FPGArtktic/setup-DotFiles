@@ -1,9 +1,5 @@
 # ===========================================================================
 #  Build context exclusions
-#  .containerignore and .dockerignore are kept byte-identical so that podman
-#  and docker see exactly the same context; each engine reads only its own
-#  file, and a difference between the two would show up as a build that works
-#  under one and not the other.
 #
 #  The Containerfile COPYs nothing. Every file this repository ships -
 #  setup-dotFiles.sh, bashrc, tmux.conf, fzf.bash, yay-apps.txt - is

@@ -17,7 +17,7 @@ Ubuntu versions live on `master`, `bookworm`, `bullseye`, `ubuntu2004`, `ubuntu2
 ## 1 Introduction
 
 A new machine, and the same evening spent again: install the packages, paste the same `.bashrc`,
-generate an SSH key, join the `docker` group, remember what else there was. This repository is that
+generate an SSH key, join the `libvirt` group, remember what else there was. This repository is that
 evening written down once.
 
 `setup-dotFiles.sh` walks through thirteen steps in a fixed order and asks a Y/n question before
@@ -49,7 +49,7 @@ all, and as root `$HOME` is `/root`, so the dotfiles, the SSH key and the RAM di
 all be installed for the wrong user. `preflight` checks each of these and stops before anything is
 changed.
 
-The test environment needs podman or docker instead. Nothing else.
+The test environment needs podman instead. Nothing else.
 
 ## 4 Installation
 
@@ -154,10 +154,6 @@ that did not resolve. This is the long step; see section 10 before you accept it
 untouched - never overwritten, never prompted about. A new key is followed by the URL for adding it
 to GitHub and the public key itself.
 
-**6. docker.** Only when docker is actually installed. Creates the `docker` group if needed, adds
-you to it, and enables `docker.service`. It warns first, because membership of that group is
-equivalent to passwordless root, and reminds you that the membership applies to new logins only.
-
 **7. libvirt.** Membership of the `libvirt` group, `libvirtd.socket`, and the default guest
 network. The group is the whole of the access control: `50-libvirt.rules`, shipped by the libvirt
 package, grants `org.libvirt.unix.manage` to that group and to nothing else - no `sudo`, no
@@ -210,7 +206,7 @@ What each file is:
 
 **`bashrc`** - unlimited, timestamped history shared between terminals; a two-line prompt ending in
 the current git branch; aliases that are only defined when the tool behind them is installed (`eza`,
-`bat`, `btop`, `lazygit`, `lazydocker`, `podman-tui`); and a `fastfetch` greeting you can silence
+`bat`, `btop`, `lazygit`, `podman-tui`); and a `fastfetch` greeting you can silence
 with `DOTFILES_NO_FETCH=1`. Your own additions belong in `~/.bashrc.local`, which is sourced last
 and is never touched by a reinstall.
 
@@ -244,9 +240,7 @@ sudo, and `yay` already built - so `setup-dotFiles.sh` can be run for real, twic
 want to prove it is idempotent, on a machine that gets thrown away afterwards.
 
 ```
-  --podman            use podman (preferred when both engines are installed)
-  --docker            use docker
-  --engine NAME       the same choice spelled out: --engine podman|docker
+  --podman            accepted for old command lines; podman is the only engine
   --rebuild           build with --no-cache --pull, ignoring every cached layer
   --no-build          do not build, run the image that is already tagged
   --build-only        build the image and stop
@@ -258,17 +252,16 @@ want to prove it is idempotent, on a machine that gets thrown away afterwards.
   --version           version and licence
 ```
 
-### 8.1 Either engine
+### 8.1 podman only
 
-The engine is autodetected. Podman wins when both are installed, because rootless containers cannot
-hurt the host; `--docker` or `--engine docker` overrides that. `--file` is always passed
-explicitly, so it does not matter that podman looks for `Containerfile` and docker for `Dockerfile`.
+The test environment runs on podman and nothing else: it is rootless and daemonless, so there is
+no service to enable and no group to join before the first run. `--file` is always passed
+explicitly, so the build does not depend on the current directory.
 
-Ownership of the mounted checkout is handled per engine, and the difference is real. Under rootful
-docker a container uid *is* that host uid, so your uid is baked into the image at build time with
-`--build-arg DOT_UID` and no run-time flag is needed. Under rootless podman the container lives in
-a user namespace, so `--userns=keep-id` is added to map you onto the image user. Rootless docker
-can do neither, and `run.sh` says so rather than silently handing you a checkout you cannot edit.
+Ownership of the mounted checkout is handled for both podman modes. Under rootless podman the
+container lives in a user namespace, so `--userns=keep-id` is added to map you onto the image user.
+Under rootful podman a container uid *is* that host uid, so your uid is baked into the image at
+build time with `--build-arg DOT_UID` and no run-time flag is needed.
 
 The image is tagged `setup-dotfiles-test-$USER:latest` - the uid is baked in, so two users on one
 machine must not share a tag.
@@ -289,17 +282,12 @@ second one is not a no-op.
 ### 8.3 What it cannot test
 
 There is no systemd in there - PID 1 is bash - so `systemctl` steps are skipped, not failed;
-`setup-dotFiles.sh` notices the container from the marker file the engine leaves
-(`/run/.containerenv` under podman, `/.dockerenv` under docker). Kernel modules, `/dev/kvm` and
+`setup-dotFiles.sh` notices the container from the marker file podman leaves
+(`/run/.containerenv`). Kernel modules, `/dev/kvm` and
 anything wanting a real `/sys` are out of scope by construction.
 
 The mount is **read-write**, which is deliberate - it is how you inspect the damage afterwards -
 but it is also why you should not point this at a tree you care about.
-
-### 8.4 docker_test.sh
-
-Kept only so that older notes and bookmarks keep working. It prints a note and forwards everything
-to `./run.sh --docker`. Use `run.sh`.
 
 ## 9 Examples
 
@@ -317,7 +305,7 @@ Try it in a container before trusting it with your own `$HOME`:
 ```sh
 ./run.sh                                 # build, then drop into a shell at /app
 ./run.sh --rebuild                       # forget every cached layer first
-./run.sh --docker -- ./setup-dotFiles.sh -y
+./run.sh -- ./setup-dotFiles.sh -y
 ```
 
 See what it would do, in detail, without doing any of it:
@@ -363,11 +351,9 @@ In the repository:
 
 ```
 setup-dotFiles.sh       the installer
-run.sh                  builds and enters the test container, podman or docker
-docker_test.sh          compatibility shim for `run.sh --docker`
+run.sh                  builds and enters the test container (podman)
 Containerfile           the test image; ARG DOT_BASE_IMAGE/DOT_USER/DOT_UID/DOT_GID/DOT_TZ
-.containerignore        byte-identical to .dockerignore; the build context is empty by design
-.dockerignore
+.containerignore        the build context is empty by design
 yay-apps.txt            the package list
 bashrc                  installed as a managed block inside ~/.bashrc
 fzf.bash                installed as ~/.fzf.bash, sourced from that block
@@ -425,24 +411,13 @@ really do want every step.
 fix `yay-apps.txt`; the bulk transaction already fell back to one package at a time, so everything
 else did get installed.
 
-**`docker is not installed - nothing to configure`.** The docker step configures docker, it does
-not install it. Run the package step first, or install docker yourself, then re-run.
-
-**`docker: permission denied` after the docker step.** Group membership only applies to new logins.
-`newgrp docker`, or log out and back in.
-
 **An SSH session looks nothing like the terminal on the desktop.** A login shell does not read
 `~/.bashrc`. Install `bash_profile` as `~/.bash_profile` (section 7).
 
 **Tailscale is installed but the machine is not on the network.** Installing it does not connect
 it: `sudo tailscale up`.
 
-**`neither podman nor docker is installed`.** `sudo pacman -S podman` - rootless, with nothing to
-enable - or `sudo pacman -S docker && sudo systemctl enable --now docker`.
-
-**Files written in `/app` are owned by somebody else.** Rootless docker cannot map your uid onto
-the container user, and `run.sh` warns about this when it happens. Install podman, or use rootful
-docker.
+**`podman is not installed`.** `sudo pacman -S podman` - rootless, with nothing to enable.
 
 **The image build fails on `archlinux-keyring` or a signature.** The base image is stale relative
 to the mirrors. `./run.sh --rebuild` pulls a fresh base and redoes the keyring refresh.
@@ -464,11 +439,10 @@ Known, deliberate, or not worth fixing yet:
 - `yay-apps.txt` carries the maintainer's own machine as well as the dotfiles' dependencies: four
   kernels, the KVM/libvirt stack, a browser. It is meant to be edited.
 - The container cannot exercise systemd, kernel modules or `/dev/kvm`. A green run in there does
-  not prove the docker and libvirt steps work on metal.
+  not prove the libvirt step works on metal.
 - There are no automated assertions after a test run. The regression test is running
   `setup-dotFiles.sh -y` twice and checking that the second run changes nothing.
 - `run.sh` mounts the checkout read-write, so a container run can write into your working tree.
-- `docker_test.sh` exists only for compatibility and will not gain any features.
 - podman warns that `SHELL` is not persisted in OCI images on nearly every build step. It is noise;
   `CMD` is set explicitly at the end of the `Containerfile`.
 
