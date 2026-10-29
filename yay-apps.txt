@@ -199,6 +199,22 @@ net-tools
 # opt-in step; that step should install it with pacman rather than piping a
 # remote installer into a root shell.
 
+# --- audio -------------------------------------------------------------------
+# The audio step's profile (docs/AUDIO.md) is written for PipeWire and
+# WirePlumber. alsa-utils brings amixer - the only way to read or set the
+# M20's hardware mute - and alsa-restore.service, which keeps the mixer state
+# across reboots. wiremix and pwvucontrol (AUR) are mixers; strawberry is the
+# bit-perfect music player.
+pipewire
+pipewire-pulse
+pipewire-alsa
+pipewire-jack
+wireplumber
+alsa-utils
+wiremix
+pwvucontrol
+strawberry
+
 # --- monitoring and diagnostics ---------------------------------------------
 htop
 atop

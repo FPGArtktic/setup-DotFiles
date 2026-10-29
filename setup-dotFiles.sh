@@ -81,6 +81,7 @@ STARSHIP_SRC="$SCRIPT_DIR/starship.toml"
 FASTFETCH_SRC="$SCRIPT_DIR/fastfetch/config.jsonc"
 KONSOLE_SRC="$SCRIPT_DIR/konsole"
 MAKEPKG_SRC="$SCRIPT_DIR/makepkg-native.conf"
+AUDIO_SRC="$SCRIPT_DIR/audio"
 NVIM_SRC="$SCRIPT_DIR/nvim"
 PKG_LIST="$SCRIPT_DIR/yay-apps.txt"
 
@@ -1416,6 +1417,50 @@ install_openrgb() {
     completed
 }
 
+# The audio profile: PipeWire at the material's native rate, WirePlumber with
+# a better resampler and no sink suspend, the AutoEq switcher with its
+# impulses, and the M20 drop logger. docs/AUDIO.md has the why.
+#
+# Everything goes into $HOME and nothing is forced per card, so the profile
+# is safe on any hardware: the rules match every alsa_output, and allowed-rates
+# is trimmed by PipeWire to what each card can do.
+install_audio_profile() {
+    log "Audio profile (PipeWire, WirePlumber, AutoEq)"
+    local pw="$XDG_CONFIG_DIR/pipewire/pipewire.conf.d"
+    local wp="$XDG_CONFIG_DIR/wireplumber/wireplumber.conf.d"
+    local eq="$HOME/.local/share/autoeq/denon"
+    step "audio/pipewire/99-audiophile.conf    -> $(tilde "$pw")/"
+    step "audio/wireplumber/99-audiophile.conf -> $(tilde "$wp")/"
+    step "audio/autoeq/denon/ -> $(tilde "$eq")/, autoeq and m20-dropwatch -> ~/.local/bin/"
+    confirm "Install the audio profile?" y || { skipped; return 0; }
+    need_file "$AUDIO_SRC/pipewire/99-audiophile.conf" || return 1
+    need_file "$AUDIO_SRC/wireplumber/99-audiophile.conf" || return 1
+
+    run mkdir -p "$pw" "$wp" "$eq" "$HOME/.local/bin" || return 1
+    install_file "$AUDIO_SRC/pipewire/99-audiophile.conf" "$pw/99-audiophile.conf" || return 1
+    install_file "$AUDIO_SRC/wireplumber/99-audiophile.conf" "$wp/99-audiophile.conf" || return 1
+
+    local f
+    for f in "$AUDIO_SRC"/autoeq/denon/*; do
+        copy_if_changed "$f" "$eq/$(basename "$f")" || return 1
+    done
+    for f in "$AUDIO_SRC"/bin/*; do
+        install_file "$f" "$HOME/.local/bin/$(basename "$f")" || return 1
+        run chmod 755 "$HOME/.local/bin/$(basename "$f")" || return 1
+    done
+
+    # The new files only apply to a restarted PipeWire. Nothing to restart
+    # in a container, or before the user session exists.
+    if ! in_container && systemctl --user is-active --quiet pipewire 2>/dev/null; then
+        run systemctl --user restart pipewire pipewire-pulse wireplumber \
+            || warn "could not restart PipeWire - log out and back in"
+    fi
+    ok_did "audio profile installed"
+    hint "AutoEq is off; turn it on with: autoeq D5200  (autoeq sinks lists the outputs)"
+    hint "check the clock with: pw-metadata -n settings | grep rate"
+    completed
+}
+
 # 6. zsh: the configuration, Oh My Zsh, the three custom plugins, the mtsh
 #    theme, and - only if asked - the login shell.
 #
@@ -2296,6 +2341,7 @@ main() {
     do_step "cachyos kernel" install_cachyos_kernel
     do_step "thermalright lcd" install_thermalright_lcd
     do_step "rgb"           install_openrgb
+    do_step "audio"         install_audio_profile
     do_step "zsh"           install_zsh
     do_step "ssh key"       install_sshkey
     do_step "libvirt"       install_libvirt_configuration
