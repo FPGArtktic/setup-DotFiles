@@ -43,7 +43,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="2.1.0"
+SCRIPT_VERSION="3.0.0"
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 SCRIPT_NAME="$(basename "$SCRIPT_PATH")"
@@ -706,17 +706,26 @@ touches nothing.
 
 ${C_BOLD}steps, in order${C_RESET}
   system update   full pacman -Syu plus base-devel and git
-  bashrc          bashrc, sourced from ~/.bashrc
+  bashrc          bashrc, sourced from ~/.bashrc; shell/*.sh -> ~/.config/shell/,
+                  blerc -> ~/.blerc, inputrc -> ~/.inputrc
   bash profile    bash_profile, sourced from ~/.bash_profile
+  makepkg         makepkg-native.conf -> $MAKEPKG_DEST
+                  (-march=native, -j\$(nproc), ccache, tmpfs builds, !debug)
   yay             built from the AUR when it is not already installed
   packages        everything listed in yay-apps.txt
-  zsh             zshrc, sourced from ~/.zshrc, plus Oh My Zsh,
-                  zsh-autosuggestions, zsh-syntax-highlighting, fzf-tab and
-                  the mtsh theme; offers to change the login shell
+  cachyos kernel  linux-cachyos built with _processor_opt=native, GRUB default
+  thermalright lcd  thermalright-trcc (AUR) for Thermalright LCD coolers
+  rgb             OpenRGB for the board's RGB/ARGB headers, i2c-dev at boot
+  audio           PipeWire/WirePlumber profile, autoeq, m20-dropwatch
+  zsh             zshrc, sourced from ~/.zshrc, plus Oh My Zsh, fzf-tab,
+                  zsh-autosuggestions, fast-syntax-highlighting,
+                  zsh-history-substring-search and the mtsh theme;
+                  offers to change the login shell
   ssh key         an ed25519 key, only when there is none
   libvirt         libvirt group membership, libvirtd.socket and the
                   default guest network
-  fzf             fzf.bash -> ~/.fzf.bash, plus the shell integration
+  prompt          starship.toml, fastfetch config, ble.sh, pkgfile --update
+  konsole         Konsole profile (Nerd Font, Catppuccin Mocha) as default
   ram disk        ~/RAMDISC -> /dev/shm
   tmux            tmux.conf -> ~/.tmux.conf, plus tpm and its plugins
   neovim          nvim/ -> $(tilde "$NVIM_DEST"), then lazy.nvim, Mason, tree-sitter
@@ -731,8 +740,9 @@ and hooked into ~/.bashrc, ~/.zshrc and ~/.bash_profile with ONE guarded
 source line each, between "# >>> $BLOCK_TAG: ... >>>" markers. A second run
 rewrites the copy, not your rc file, so nothing is ever appended twice, and
 the first version of your rc file is kept as <file>.orig.$BLOCK_TAG.
-~/.bashrc.local and ~/.zshrc.local are sourced last by those files and are
-never written to - put your own settings there.
+~/.config/shell/local.sh (both shells), ~/.bashrc.local and ~/.zshrc.local
+are sourced last by those files and are never written to - put your own
+settings there.
 
 ${C_BOLD}the login shell${C_RESET}
 --yes never changes it: an unattended run prints the chsh command and moves on.
@@ -746,7 +756,9 @@ DOTFILES_BOOTSTRAP_TIMEOUT (milliseconds) bounds the wait; see nvim/README.md.
 Environment: GIT_AUTHOR, GIT_EMAIL (same as the two git flags), NO_COLOR,
 ASSUME_YES (same as --yes), XDG_CONFIG_HOME and ZDOTDIR are honoured.
 Data files, all read from $SCRIPT_DIR:
-  bashrc, zshrc, bash_profile, fzf.bash, tmux.conf, yay-apps.txt, nvim/
+  bashrc, zshrc, bash_profile, shell/, blerc, inputrc, starship.toml,
+  fastfetch/, konsole/, makepkg-native.conf, audio/, tmux.conf,
+  yay-apps.txt, nvim/
 EOF
 }
 # Note: --script-gen-only was advertised by the previous usage() but was never
@@ -1055,7 +1067,7 @@ install_bash_profile() {
     completed
 }
 
-# makepkg tuned for this machine: -march=native, every core, ccache, tmpfs
+# 4. makepkg tuned for this machine: -march=native, every core, ccache, tmpfs
 # build directory, no -debug packages, fast package compression. It comes
 # before yay on purpose - yay itself is the first thing makepkg builds.
 install_makepkg_native() {
@@ -1111,7 +1123,7 @@ install_makepkg_native() {
     completed
 }
 
-# 4. yay, built from the AUR - but only when it is not already there.
+# 5. yay, built from the AUR - but only when it is not already there.
 install_yay() {
     log "AUR helper"
     if have yay; then
@@ -1170,7 +1182,7 @@ yay_bootstrap() (
     return 0
 )
 
-# 5. The package list.
+# 6. The package list.
 install_yay_packages() {
     log "Packages from yay-apps.txt"
     if ! have yay; then
@@ -1226,7 +1238,7 @@ install_yay_packages() {
     return 1
 }
 
-# The CachyOS kernel, built from the AUR for exactly this CPU.
+# 7. The CachyOS kernel, built from the AUR for exactly this CPU.
 #
 # _processor_opt=native is the PKGBUILD's own switch (it enables
 # X86_NATIVE_CPU); the kernel ignores makepkg's CFLAGS, so the drop-in above
@@ -1289,7 +1301,7 @@ install_cachyos_kernel() {
     completed
 }
 
-# Thermalright LCD coolers (Frozen Warframe, Trofeo Vision, Assassin Spirit
+# 8. Thermalright LCD coolers (Frozen Warframe, Trofeo Vision, Assassin Spirit
 # Vision, Elite Vision and friends). The screen on the pump or the fan hub is
 # a USB device that shows nothing at all until a program feeds it frames.
 #
@@ -1321,7 +1333,9 @@ install_thermalright_lcd() {
     confirm "Install the Thermalright LCD software?" "$default" || { skipped; return 0; }
     if ! have yay; then
         warn "yay is not installed - thermalright-trcc comes from the AUR"
-        return 1
+        hint "answer yes to the yay step, or install it yourself, then re-run"
+        skipped
+        return 0
     fi
     ensure_sudo || return 1
 
@@ -1355,7 +1369,7 @@ install_thermalright_lcd() {
     completed
 }
 
-# ARGB through OpenRGB.
+# 9. ARGB through OpenRGB.
 #
 # Gigabyte boards drive their RGB and ARGB headers from an ITE controller on
 # USB (048d:5702 "RGB Fusion 2"; 048d:8297 and 048d:5711 on other boards),
@@ -1417,7 +1431,7 @@ install_openrgb() {
     completed
 }
 
-# The audio profile: PipeWire at the material's native rate, WirePlumber with
+# 10. The audio profile: PipeWire at the material's native rate, WirePlumber with
 # a better resampler and no sink suspend, the AutoEq switcher with its
 # impulses, and the M20 drop logger. docs/AUDIO.md has the why.
 #
@@ -1461,7 +1475,7 @@ install_audio_profile() {
     completed
 }
 
-# 6. zsh: the configuration, Oh My Zsh, the three custom plugins, the mtsh
+# 11. zsh: the configuration, Oh My Zsh, the custom plugins, the mtsh
 #    theme, and - only if asked - the login shell.
 #
 #    podman_base clones exactly these repositories at build time
@@ -1676,7 +1690,7 @@ install_login_shell() {
     return 0
 }
 
-# 7. An SSH key - generated only when there is not one already.
+# 12. An SSH key - generated only when there is not one already.
 install_sshkey() {
     local key="$HOME/.ssh/id_ed25519"
     log "SSH key"
@@ -1729,7 +1743,7 @@ install_sshkey() {
     completed
 }
 
-# 9. libvirt / KVM: group membership, the socket, and the default network.
+# 13. libvirt / KVM: group membership, the socket, and the default network.
 #
 # Replaces the VirtualBox step. The two are not configured the same way and the
 # difference is worth stating: VirtualBox needed an out-of-tree module built by
@@ -1846,7 +1860,7 @@ install_libvirt_configuration() {
     completed
 }
 
-# The prompt and the tools around it: starship, fastfetch, ble.sh, and the
+# 14. The prompt and the tools around it: starship, fastfetch, ble.sh, and the
 # pkgfile database zsh's command-not-found plugin answers from.
 #
 # The programs themselves come from the package step (starship, fastfetch,
@@ -1906,7 +1920,7 @@ blesh_bootstrap() (
     return 0
 )
 
-# Konsole: a profile with the Nerd Font, the Catppuccin Mocha colours, and
+# 15. Konsole: a profile with the Nerd Font, the Catppuccin Mocha colours, and
 # that profile as the default.
 #
 # The Font= line is in the Qt 6 format (16 fields, weight 400). Konsole on
@@ -1945,7 +1959,7 @@ install_konsole() {
     completed
 }
 
-# 11. The RAM disk symlink.
+# 16. The RAM disk symlink.
 install_ram_disk() {
     log "RAM disk shortcut"
     step "$RAMDISC_LINK -> $RAMDISC_TARGET (tmpfs, cleared on reboot)"
@@ -1975,7 +1989,7 @@ install_ram_disk() {
     completed
 }
 
-# 12. tmux, and the tpm plugins ~/.tmux.conf expects to find.
+# 17. tmux, and the tpm plugins ~/.tmux.conf expects to find.
 install_tmux() {
     log "tmux configuration"
     step "installs $TMUX_SRC as ~/.tmux.conf (existing file is backed up)"
@@ -2033,7 +2047,7 @@ tpm_install() (
     return "$rc"
 )
 
-# 13. Neovim: the configuration tree, then everything it needs from the
+# 18. Neovim: the configuration tree, then everything it needs from the
 #     network - plugins, language servers, tree-sitter parsers.
 #
 #     This is the step where "the host has internet" stops being a footnote.
@@ -2144,7 +2158,7 @@ nvim_tree_matches() {
     return 0
 }
 
-# 14. Global git configuration.
+# 19. Global git configuration.
 install_git_rules() {
     log "Global git configuration"
     if ! have git; then
@@ -2219,7 +2233,7 @@ install_git_rules() {
     completed
 }
 
-# 15. Tailscale.
+# 20. Tailscale.
 install_tailscale() {
     log "Tailscale"
     # The upstream one-liner piped a remote script into a root shell and then
@@ -2250,7 +2264,7 @@ install_tailscale() {
     completed
 }
 
-# 16. Final upgrade and cache trim.
+# 21. Final upgrade and cache trim.
 post_installation() {
     log "Post-installation"
     confirm "Run a final upgrade and trim the package cache?" y || { skipped; return 0; }

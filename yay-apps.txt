@@ -83,6 +83,9 @@ vim-runtime
 nano
 tmux
 mc
+# konsole: the terminal the konsole step configures (Nerd Font, Catppuccin
+# Mocha). plasma-meta does not pull it in.
+konsole
 
 # --- development ------------------------------------------------------------
 git
