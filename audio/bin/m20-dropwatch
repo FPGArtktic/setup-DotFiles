@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# ===========================================================================
+#  m20-dropwatch - log every time the Q Acoustics M20 drops off the USB bus
+#  Installed by setup-dotFiles.sh into ~/.local/bin.
+#
+#  Each drop is logged with the rate and format the card was running a moment
+#  before, plus rate changes, PCM closes, USB stream state changes and clock
+#  excursions - the things the journal does not report. For before/after
+#  comparisons when changing a cable, a port or the allowed-rates list.
+#
+#      setsid -f m20-dropwatch        start in the background
+#      pkill -f m20-dropwatch         stop
+#      m20-dropwatch --report         summary of the log
+#
+#  The M20 is found by its USB id (0d8c:0314), so the port and the ALSA card
+#  number follow it to whatever socket it is plugged into. Override with
+#  M20_USB_ID=vvvv:pppp for another USB DAC.
+# ===========================================================================
+
+set -u
+
+USB_ID="${M20_USB_ID:-0d8c:0314}"
+LOG="$HOME/audio-dropouts.log"
+STATE="${XDG_RUNTIME_DIR:-/tmp}/m20-dropwatch.last"
+
+if [[ "${1:-}" == "--report" ]]; then
+    [[ -f "$LOG" ]] || { echo "No $LOG yet - the watcher has not logged anything."; exit 0; }
+    echo "M20 events in $LOG:"
+    printf '  %-6s %s\n' "$(grep -c DROP "$LOG")" "drops off the bus (DROP)"
+    printf '  %-6s %s\n' "$(grep -c EPROTO "$LOG")" "protocol errors (-71/EPROTO)"
+    echo
+    echo "Last 15:"
+    tail -15 "$LOG" | sed 's/^/  /'
+    echo
+    echo "Drops by hour:"
+    grep DROP "$LOG" | awk '{print substr($2,1,2)":00"}' | sort | uniq -c | sed 's/^/  /'
+    exit 0
+fi
+
+# The USB port (e.g. 7-1.2) is the sysfs device name; the ALSA card hangs
+# off one of its interfaces.
+PORT=""
+for d in /sys/bus/usb/devices/*; do
+    [[ -r $d/idVendor && -r $d/idProduct ]] || continue
+    if [[ "$(cat "$d/idVendor"):$(cat "$d/idProduct")" == "$USB_ID" ]]; then
+        PORT="$(basename "$d")"
+        break
+    fi
+done
+[[ -n $PORT ]] || { echo "No USB device $USB_ID plugged in." >&2; exit 1; }
+card_dir="$(compgen -G "/sys/bus/usb/devices/$PORT:*/sound/card*" | head -1)"
+CARD="${card_dir##*card}"
+[[ $CARD =~ ^[0-9]+$ ]] || { echo "$USB_ID on $PORT has no ALSA card." >&2; exit 1; }
+
+# Do not start a second copy.
+others=$(pgrep -f '[m]20-dropwatch$' | grep -v "^$$\$")
+[[ -n "$others" ]] && { echo "Already running (pid: $others)"; exit 0; }
+
+# Sample hw_params in the background, for two reasons: (1) to know at the
+# moment of a drop which rate it happened at - the journal does not say; (2)
+# to log EVERY rate change and every PCM close, because on a rate change the
+# DAC relocks its PLL and goes silent for a moment without reporting it.
+sample_loop() {
+    local prev="" prev_st="" hw cur s0 st fq altset now_st nom dev
+    while :; do
+        hw=$(cat "/proc/asound/card$CARD/pcm0p/sub0/hw_params" 2>/dev/null)
+        if [[ -n "$hw" && "$hw" != "closed" ]]; then
+            cur="rate=$(sed -n 's/^rate: \([0-9]*\).*/\1/p' <<<"$hw")"
+            cur+=" fmt=$(sed -n 's/^format: //p' <<<"$hw")"
+            cur+=" period=$(sed -n 's/^period_size: //p' <<<"$hw")"
+        else
+            cur="rate=- (PCM closed)"
+        fi
+        echo "$cur" > "$STATE"
+
+        if [[ -n "$prev" && "$cur" != "$prev" ]]; then
+            echo "$(date '+%F %T') RATECHG   $prev  ->  $cur" >> "$LOG"
+        fi
+        prev="$cur"
+
+        # The USB endpoint itself. "Status" should stay Running while the
+        # PCM plays, and "Momentary freq" is the clock recovered from the
+        # DAC's feedback. A jump or a stop in either proves the break is on
+        # the device side, not in the system - and the journal says nothing.
+        s0=$(cat "/proc/asound/card$CARD/stream0" 2>/dev/null)
+        st="$(sed -n 's/^ *Status: //p' <<<"$s0" | head -1)"
+        fq="$(sed -n 's/^ *Momentary freq = \([0-9]*\) Hz.*/\1/p' <<<"$s0" | head -1)"
+        altset="$(sed -n 's/^ *Altset = //p' <<<"$s0" | head -1)"
+        now_st="st=${st:-?} altset=${altset:-?}"
+
+        if [[ -n "$prev_st" && "$now_st" != "$prev_st" ]]; then
+            echo "$(date '+%F %T') USBSTATE  $prev_st  ->  $now_st" >> "$LOG"
+        fi
+        prev_st="$now_st"
+
+        # Clock: only excursions above 0.5% of nominal; the normal feedback
+        # drift is tens of Hz and would flood the log.
+        if [[ -n "${fq:-}" && -n "${cur##*rate=-*}" ]]; then
+            nom="${cur#rate=}"; nom="${nom%% *}"
+            if [[ "$nom" =~ ^[0-9]+$ && "$fq" -gt 0 ]]; then
+                dev=$(( (fq - nom) * 1000 / nom ))
+                [[ ${dev#-} -gt 5 ]] && \
+                    echo "$(date '+%F %T') CLOCKDEV  nominal=$nom momentary=$fq (off by ${dev}‰)" >> "$LOG"
+            fi
+        fi
+
+        sleep 0.25
+    done
+}
+sample_loop &
+SAMPLER=$!
+trap 'kill $SAMPLER 2>/dev/null' EXIT
+
+echo "# --- start $(date '+%F %T') id=$USB_ID port=$PORT card=$CARD ---" >> "$LOG"
+
+journalctl -k -f -n 0 -o short-iso 2>/dev/null | while read -r line; do
+    case "$line" in
+        *"usb $PORT: USB disconnect"*)
+            echo "$(date '+%F %T') DROP      $(cat "$STATE" 2>/dev/null)" >> "$LOG"
+            ;;
+        *"usb $PORT: new "*"-speed"*)
+            echo "$(date '+%F %T') RETURN    device is back on the bus" >> "$LOG"
+            ;;
+        *"usb $PORT"*"err -71"*)
+            echo "$(date '+%F %T') EPROTO    ${line#*usb "$PORT": }" >> "$LOG"
+            ;;
+        *"usb $PORT"*"reset"*)
+            echo "$(date '+%F %T') RESET     ${line#*usb "$PORT": }" >> "$LOG"
+            ;;
+    esac
+done

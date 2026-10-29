@@ -12,8 +12,8 @@
 #      ./run.sh --rebuild                    # forget every cached layer
 #      ./run.sh -- ./setup-dotFiles.sh -y    # run it, exit with its status
 #
-#  Works with podman or docker; podman is preferred when both are installed
-#  because rootless containers cannot hurt the host.
+#  Runs on podman only: rootless by default, so a container that goes wrong
+#  cannot hurt the host, and nothing has to be enabled or joined first.
 #
 #  Run `./run.sh --help` for the full option reference.
 # ===========================================================================
@@ -40,13 +40,13 @@ IMAGE_SLUG="$(printf '%s' "$HOST_USER" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-
 IMAGE_NAME="setup-dotfiles-test-${IMAGE_SLUG:-user}"
 # Appended only when the reference does not carry a tag of its own - see
 # image_ref(). "--tag myimage:v2" used to become "myimage:v2:latest", which
-# podman and docker both reject as an invalid reference.
+# podman rejects as an invalid reference.
 IMAGE_TAG_DEFAULT="latest"
 CONTAINER_HOSTNAME="dotfiles-test"
 MOUNT_POINT="/app"
 
 # --- defaults ---------------------------------------------------------------
-ENGINE=""            # empty means "autodetect"
+ENGINE="podman"      # the only engine this script drives
 BASE_IMAGE=""        # empty means "whatever the Containerfile defaults to"
 REBUILD=0
 NO_BUILD=0
@@ -129,9 +129,7 @@ usage() {
     cat >&2 <<EOF
 ${C_BOLD}$SCRIPT_NAME${C_RESET} [options] [-- COMMAND...]   - test setup-dotFiles.sh in a container
 
-  --podman            use podman (preferred when both engines are installed)
-  --docker            use docker
-  --engine NAME       the same choice spelled out: --engine podman|docker
+  --podman            accepted for old command lines; podman is the only engine
   --rebuild           build with --no-cache --pull, ignoring every cached layer
   --no-build          do not build, run the image that is already tagged
   --build-only        build the image and stop
@@ -173,30 +171,16 @@ EOF
 # ===========================================================================
 #  Engine selection
 # ===========================================================================
-# podman first: rootless by default, so a container that goes wrong cannot
-# take the host with it. docker is the fallback, not the punishment.
+# podman only. It is rootless by default, so a container that goes wrong
+# cannot take the host with it, and unlike a docker daemon there is no
+# service to enable and no group to join before the first run.
 select_engine() {
-    if [ -n "$ENGINE" ]; then
-        have "$ENGINE" || die "$ENGINE is not installed or not on \$PATH"
-        step "engine ...... $ENGINE (asked for explicitly)"
-        return 0
-    fi
-
-    if have podman && have docker; then
-        ENGINE="podman"
-        step "engine ...... podman (autodetected; docker is here too, pass --docker for it)"
-    elif have podman; then
-        ENGINE="podman"
-        step "engine ...... podman (autodetected)"
-    elif have docker; then
-        ENGINE="docker"
-        step "engine ...... docker (autodetected; podman is not installed)"
-    else
-        err "neither podman nor docker is installed"
+    if ! have podman; then
+        err "podman is not installed"
         hint "arch: sudo pacman -S podman   (rootless, nothing to enable)"
-        hint "or:   sudo pacman -S docker && sudo systemctl enable --now docker"
         exit 1
     fi
+    step "engine ...... podman"
 }
 
 # Is this engine running rootless? The answer decides the whole uid story
@@ -204,19 +188,8 @@ select_engine() {
 # where we add no mapping flags and can therefore break nothing.
 engine_is_rootless() {
     local answer
-    case "$ENGINE" in
-        podman)
-            answer="$($ENGINE info --format '{{.Host.Security.Rootless}}' 2>/dev/null || true)"
-            [ "$answer" = "true" ]
-            ;;
-        docker)
-            # Rootless docker advertises itself in SecurityOptions as
-            # "name=rootless". Plain `docker info` also works but is chattier.
-            answer="$($ENGINE info --format '{{.SecurityOptions}}' 2>/dev/null || true)"
-            case "$answer" in *rootless*) return 0 ;; *) return 1 ;; esac
-            ;;
-        *)  return 1 ;;
-    esac
+    answer="$($ENGINE info --format '{{.Host.Security.Rootless}}' 2>/dev/null || true)"
+    [ "$answer" = "true" ]
 }
 
 # SELinux relabels a bind mount out of the container's reach unless it is
@@ -230,15 +203,8 @@ selinux_suffix() {
 # ===========================================================================
 # Files the container writes into /app must come out owned by the caller,
 # otherwise the first test run leaves a checkout the caller cannot edit.
-# Two engines, two entirely different mechanisms:
 #
-#   docker (rootful daemon)
-#       There is no user namespace. A process running as uid 1000 in the
-#       container is uid 1000 on the host, full stop. So baking the caller's
-#       uid into the image with --build-arg WRK_UID is the whole fix; no run
-#       flag is needed and --userns would only get in the way.
-#
-#   podman (rootless)
+#   rootless podman (the normal case)
 #       The container lives in a user namespace where container uid 0 is the
 #       caller and every other container uid comes out of /etc/subuid - so
 #       the image user, uid 1000, writes files owned by host uid 100999 or
@@ -249,10 +215,10 @@ selinux_suffix() {
 #       keep-id:uid=,gid= form (podman 4.3+) is only needed when the image
 #       user's uid differs from the host's, which by construction it cannot.
 #
-#   podman (rootful) / docker (rootless)
-#       Rootful podman behaves like rootful docker and rejects keep-id
-#       outright. Rootless docker has no keep-id at all and no equivalent, so
-#       ownership is warned about rather than fixed.
+#   rootful podman (sudo podman)
+#       There is no user namespace and keep-id is rejected outright. Container
+#       uid is host uid, so baking the caller's uid into the image with
+#       --build-arg DOT_UID is the whole fix.
 resolve_identity() {
     IMG_UID="$HOST_UID"
     IMG_GID="$HOST_GID"
@@ -276,21 +242,12 @@ USERNS_ARGS=()
 resolve_userns() {
     USERNS_ARGS=()
     if engine_is_rootless; then
-        case "$ENGINE" in
-            podman)
-                USERNS_ARGS+=(--userns "keep-id")
-                step "mapping ..... --userns=keep-id (rootless podman)"
-                ;;
-            docker)
-                warn "rootless docker cannot map the caller onto the container user"
-                hint "files written to $MOUNT_POINT will be owned by a subuid, not by $HOST_USER"
-                hint "install podman if you want the mounted checkout to stay yours"
-                ;;
-        esac
+        USERNS_ARGS+=(--userns "keep-id")
+        step "mapping ..... --userns=keep-id (rootless podman)"
     else
-        # Rootful: container uid is host uid already, and both engines reject
+        # Rootful: container uid is host uid already, and podman rejects
         # keep-id in this mode, so the correct mapping is no mapping.
-        step "mapping ..... none needed (rootful $ENGINE)"
+        step "mapping ..... none needed (rootful podman)"
     fi
 }
 
@@ -298,21 +255,16 @@ resolve_userns() {
 #  Build
 # ===========================================================================
 containerfile_path() {
-    # podman reads Containerfile by default and docker reads Dockerfile, so
-    # the file is always named explicitly with --file. Containerfile wins
-    # when both exist; a lone Dockerfile still works, loudly.
+    # Named explicitly with --file, so the build never depends on the
+    # current directory.
     if [ -f "$SCRIPT_DIR/Containerfile" ]; then
         printf '%s\n' "$SCRIPT_DIR/Containerfile"
-    elif [ -f "$SCRIPT_DIR/Dockerfile" ]; then
-        warn "no Containerfile - falling back to Dockerfile"
-        printf '%s\n' "$SCRIPT_DIR/Dockerfile"
     else
-        die "no Containerfile or Dockerfile in $SCRIPT_DIR"
+        die "no Containerfile in $SCRIPT_DIR"
     fi
 }
 
-# An undeclared --build-arg is only a warning, never an error, in both
-# engines. That is the dangerous case: rename DOT_UID in the Containerfile and
+# An undeclared --build-arg is only a warning, never an error, in podman. That is the dangerous case: rename DOT_UID in the Containerfile and
 # every build would keep succeeding while quietly falling back to uid 1000,
 # handing the caller a checkout owned by somebody else. So it is checked.
 assert_build_arg() {
@@ -415,9 +367,8 @@ run_container() {
         args+=("${USERNS_ARGS[@]}")
     fi
 
-    # A pty is allocated only when both ends really are terminals. `--tty`
-    # against a pipe aborts docker with "the input device is not a TTY", and
-    # where it does start, the runtime rewrites every \n as \r\n - so
+    # A pty is allocated only when both ends really are terminals. With
+    # `--tty` the runtime rewrites every \n as \r\n - so
     # `./run.sh -- cmd > file` would quietly produce a CRLF file.
     args+=(--interactive)
     if [ -t 0 ] && [ -t 1 ]; then
@@ -451,9 +402,9 @@ main() {
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --podman)     ENGINE="podman"; shift ;;
-            --docker)     ENGINE="docker"; shift ;;
-            --engine)     ENGINE="${2:?--engine needs podman or docker}"; shift 2 ;;
+            --podman)     shift ;;
+            --docker|--engine)
+                          die "$1 is gone - this test environment runs on podman only" ;;
             --rebuild)    REBUILD=1; shift ;;
             --no-build)   NO_BUILD=1; shift ;;
             --build-only) BUILD_ONLY=1; shift ;;
@@ -467,11 +418,6 @@ main() {
             *)            die "unknown option '$1' (try --help)" ;;
         esac
     done
-
-    case "$ENGINE" in
-        ""|podman|docker) ;;
-        *) die "unknown engine '$ENGINE' - it is podman or docker (try --help)" ;;
-    esac
 
     if [ "$NO_BUILD" = "1" ] && [ "$BUILD_ONLY" = "1" ]; then
         die "--no-build and --build-only ask for opposite things"

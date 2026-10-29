@@ -43,14 +43,14 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="2.1.0"
+SCRIPT_VERSION="3.0.0"
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 SCRIPT_NAME="$(basename "$SCRIPT_PATH")"
 
 # --- identity of the machine we are running on RIGHT NOW ---------------------
 # $USER is not set under cron, `su`, `env -i` or some container shells, and an
-# empty expansion would silently turn `usermod -aG docker $USER` into a
+# empty expansion would silently turn `usermod -aG libvirt $USER` into a
 # missing-operand error. id -un always answers.
 USER_NAME="${USER:-$(id -un)}"
 
@@ -73,8 +73,15 @@ fi
 BASHRC_SRC="$SCRIPT_DIR/bashrc"
 ZSHRC_SRC="$SCRIPT_DIR/zshrc"
 BASH_PROFILE_SRC="$SCRIPT_DIR/bash_profile"
-FZF_SRC="$SCRIPT_DIR/fzf.bash"
 TMUX_SRC="$SCRIPT_DIR/tmux.conf"
+SHELL_SRC="$SCRIPT_DIR/shell"
+BLERC_SRC="$SCRIPT_DIR/blerc"
+INPUTRC_SRC="$SCRIPT_DIR/inputrc"
+STARSHIP_SRC="$SCRIPT_DIR/starship.toml"
+FASTFETCH_SRC="$SCRIPT_DIR/fastfetch/config.jsonc"
+KONSOLE_SRC="$SCRIPT_DIR/konsole"
+MAKEPKG_SRC="$SCRIPT_DIR/makepkg-native.conf"
+AUDIO_SRC="$SCRIPT_DIR/audio"
 NVIM_SRC="$SCRIPT_DIR/nvim"
 PKG_LIST="$SCRIPT_DIR/yay-apps.txt"
 
@@ -95,6 +102,27 @@ XDG_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
 # install, and updating the dotfiles is a plain file copy.
 MANAGED_DIR="$XDG_CONFIG_DIR/setup-dotfiles"
 
+# env.sh, aliases.sh, functions.sh and fzf.sh, shared by bash and zsh. Both
+# rc files read them from here; local.sh next to them is the user's own and
+# is never overwritten.
+SHELL_DEST="$XDG_CONFIG_DIR/shell"
+
+# ble.sh, the readline replacement bashrc loads. Unpacked from the upstream
+# nightly tarball: there is no repository package, and the AUR one builds
+# from git for minutes to produce the same files.
+BLESH_DIR="$HOME/.local/share/blesh"
+BLESH_URL="https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz"
+
+# The makepkg drop-in. "zz-" sorts it after rust.conf, whose RUSTFLAGS it
+# extends; makepkg reads /etc/makepkg.conf.d/*.conf in order after the main
+# file, so the stock /etc/makepkg.conf is never edited and never .pacnew'd.
+MAKEPKG_DEST="/etc/makepkg.conf.d/zz-native.conf"
+
+# The CachyOS kernel from the AUR. It is far too big for the tmpfs the
+# makepkg drop-in builds in, so it gets a build directory on disk.
+CACHYOS_PKGS=(linux-cachyos linux-cachyos-headers)
+CACHYOS_BUILDDIR="$HOME/.cache/makepkg-build"
+
 # Neovim reads exactly one directory, and it is not negotiable.
 NVIM_DEST="$XDG_CONFIG_DIR/nvim"
 
@@ -107,12 +135,15 @@ MTSH_REPO="https://github.com/FPGArtktic/ohmyzsh-mtsh-theme.git"
 TPM_DIR="$HOME/.tmux/plugins/tpm"
 TPM_REPO="https://github.com/tmux-plugins/tpm"
 
-# The three zsh plugins that are not part of Oh My Zsh itself, in the order
-# zshrc expects to find them. "name url" per entry, split on the first space.
+# The zsh plugins that are not part of Oh My Zsh itself, in the order zshrc
+# loads them. "name url" per entry, split on the first space. zshrc skips any
+# that is missing, so a failed clone costs one feature, not the shell.
+# zsh-completions is not here: it comes from the package of the same name.
 declare -a OMZ_PLUGIN_REPOS=(
-    "zsh-autosuggestions https://github.com/zsh-users/zsh-autosuggestions.git"
-    "zsh-syntax-highlighting https://github.com/zsh-users/zsh-syntax-highlighting.git"
     "fzf-tab https://github.com/Aloxaf/fzf-tab.git"
+    "zsh-autosuggestions https://github.com/zsh-users/zsh-autosuggestions.git"
+    "fast-syntax-highlighting https://github.com/zdharma-continuum/fast-syntax-highlighting.git"
+    "zsh-history-substring-search https://github.com/zsh-users/zsh-history-substring-search.git"
 )
 
 # --- defaults ----------------------------------------------------------------
@@ -286,8 +317,8 @@ opt_value() {
 # ok_did - report a mutation that actually happened.
 #
 # Plain `ok` after a `run` is a lie during a rehearsal: --dry-run printed
-# "would run: systemctl enable --now docker.service" and then "ok
-# docker.service enabled and started", so the one thing the user came to check
+# "would run: systemctl enable --now tailscaled" and then "ok
+# tailscaled enabled and started", so the one thing the user came to check
 # - what WOULD change - was reported as already done. Under --dry-run this
 # says "would" instead, and the wording is the only difference.
 ok_did() {
@@ -357,7 +388,6 @@ need_file() {
 # rather than reporting a failure the test environment cannot avoid.
 in_container() {
     [ -f /run/.containerenv ] && return 0
-    [ -f /.dockerenv ] && return 0
     grep -qa 'container=' /proc/1/environ 2>/dev/null && return 0
     return 1
 }
@@ -586,6 +616,54 @@ logged() {
     return "$rc"
 }
 
+# usb_has - is a USB device with one of these vendor:product ids plugged in?
+#
+#   usb_has 0416:5302 0402:3922
+#
+# Read from sysfs rather than lsusb, which is in usbutils and not installed
+# on a fresh system. Prints the first id that matched.
+usb_has() {
+    local d id want
+    for d in /sys/bus/usb/devices/*; do
+        [ -r "$d/idVendor" ] && [ -r "$d/idProduct" ] || continue
+        id="$(cat "$d/idVendor"):$(cat "$d/idProduct")"
+        for want in "$@"; do
+            if [ "${id,,}" = "${want,,}" ]; then
+                printf '%s\n' "$id"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+# autostart_entry - an XDG autostart entry, written only when there is none,
+# so an entry the user has edited (or disabled with Hidden=true) survives a
+# reinstall.
+autostart_entry() {
+    local name="$1" exec_line="$2" comment="$3"
+    local file="$XDG_CONFIG_DIR/autostart/$name.desktop"
+    if [ -e "$file" ]; then
+        ok "autostart entry $(tilde "$file") already exists - left alone"
+        return 0
+    fi
+    run mkdir -p "$XDG_CONFIG_DIR/autostart" || return 1
+    run write_file "$file" "[Desktop Entry]
+Type=Application
+Name=$name
+Comment=$comment
+Exec=$exec_line
+Terminal=false
+X-GNOME-Autostart-enabled=true
+" || return 1
+}
+
+# write_file - put a string into a file. A function of its own so that it can
+# go through run() and be shown, not done, under --dry-run.
+write_file() {
+    printf '%s' "$2" > "$1"
+}
+
 # read_pkg_list - one package name per line, blank lines and #-comments
 # dropped, duplicates dropped.
 #
@@ -628,18 +706,26 @@ touches nothing.
 
 ${C_BOLD}steps, in order${C_RESET}
   system update   full pacman -Syu plus base-devel and git
-  bashrc          bashrc, sourced from ~/.bashrc
+  bashrc          bashrc, sourced from ~/.bashrc; shell/*.sh -> ~/.config/shell/,
+                  blerc -> ~/.blerc, inputrc -> ~/.inputrc
   bash profile    bash_profile, sourced from ~/.bash_profile
+  makepkg         makepkg-native.conf -> $MAKEPKG_DEST
+                  (-march=native, -j\$(nproc), ccache, tmpfs builds, !debug)
   yay             built from the AUR when it is not already installed
   packages        everything listed in yay-apps.txt
-  zsh             zshrc, sourced from ~/.zshrc, plus Oh My Zsh,
-                  zsh-autosuggestions, zsh-syntax-highlighting, fzf-tab and
-                  the mtsh theme; offers to change the login shell
+  cachyos kernel  linux-cachyos built with _processor_opt=native, GRUB default
+  thermalright lcd  thermalright-trcc (AUR) for Thermalright LCD coolers
+  rgb             OpenRGB for the board's RGB/ARGB headers, i2c-dev at boot
+  audio           PipeWire/WirePlumber profile, autoeq, m20-dropwatch
+  zsh             zshrc, sourced from ~/.zshrc, plus Oh My Zsh, fzf-tab,
+                  zsh-autosuggestions, fast-syntax-highlighting,
+                  zsh-history-substring-search and the mtsh theme;
+                  offers to change the login shell
   ssh key         an ed25519 key, only when there is none
-  docker          docker group membership and docker.service
   libvirt         libvirt group membership, libvirtd.socket and the
                   default guest network
-  fzf             fzf.bash -> ~/.fzf.bash, plus the shell integration
+  prompt          starship.toml, fastfetch config, ble.sh, pkgfile --update
+  konsole         Konsole profile (Nerd Font, Catppuccin Mocha) as default
   ram disk        ~/RAMDISC -> /dev/shm
   tmux            tmux.conf -> ~/.tmux.conf, plus tpm and its plugins
   neovim          nvim/ -> $(tilde "$NVIM_DEST"), then lazy.nvim, Mason, tree-sitter
@@ -654,8 +740,9 @@ and hooked into ~/.bashrc, ~/.zshrc and ~/.bash_profile with ONE guarded
 source line each, between "# >>> $BLOCK_TAG: ... >>>" markers. A second run
 rewrites the copy, not your rc file, so nothing is ever appended twice, and
 the first version of your rc file is kept as <file>.orig.$BLOCK_TAG.
-~/.bashrc.local and ~/.zshrc.local are sourced last by those files and are
-never written to - put your own settings there.
+~/.config/shell/local.sh (both shells), ~/.bashrc.local and ~/.zshrc.local
+are sourced last by those files and are never written to - put your own
+settings there.
 
 ${C_BOLD}the login shell${C_RESET}
 --yes never changes it: an unattended run prints the chsh command and moves on.
@@ -669,7 +756,9 @@ DOTFILES_BOOTSTRAP_TIMEOUT (milliseconds) bounds the wait; see nvim/README.md.
 Environment: GIT_AUTHOR, GIT_EMAIL (same as the two git flags), NO_COLOR,
 ASSUME_YES (same as --yes), XDG_CONFIG_HOME and ZDOTDIR are honoured.
 Data files, all read from $SCRIPT_DIR:
-  bashrc, zshrc, bash_profile, fzf.bash, tmux.conf, yay-apps.txt, nvim/
+  bashrc, zshrc, bash_profile, shell/, blerc, inputrc, starship.toml,
+  fastfetch/, konsole/, makepkg-native.conf, audio/, tmux.conf,
+  yay-apps.txt, nvim/
 EOF
 }
 # Note: --script-gen-only was advertised by the previous usage() but was never
@@ -796,8 +885,9 @@ preflight() {
     [ "$missing" -eq 0 ] || hint "the package step installs them; re-run afterwards"
 
     local f missing=0 total=0
-    for f in "$BASHRC_SRC" "$ZSHRC_SRC" "$BASH_PROFILE_SRC" "$FZF_SRC" \
-             "$TMUX_SRC" "$PKG_LIST"; do
+    for f in "$BASHRC_SRC" "$ZSHRC_SRC" "$BASH_PROFILE_SRC" "$TMUX_SRC" \
+             "$PKG_LIST" "$SHELL_SRC/env.sh" "$BLERC_SRC" "$INPUTRC_SRC" \
+             "$STARSHIP_SRC" "$FASTFETCH_SRC" "$MAKEPKG_SRC"; do
         total=$((total + 1))
         if [ ! -f "$f" ]; then
             warn "missing data file: $f"
@@ -866,6 +956,7 @@ install_bashrc() {
     log "Bash configuration"
     step "installs bashrc as $(tilde "$MANAGED_DIR")/bashrc"
     step "and adds one guarded source line to $(tilde "$HOME/.bashrc")"
+    step "plus shell/*.sh -> $(tilde "$SHELL_DEST")/, blerc -> ~/.blerc, inputrc -> ~/.inputrc"
     confirm "Install the bash configuration?" y || { skipped; return 0; }
     need_file "$BASHRC_SRC" || return 1
 
@@ -883,16 +974,50 @@ install_bashrc() {
     # copy and the new file both being read, so it goes first.
     run rc_block_drop "$HOME/.bashrc" dotfiles \
         || warn "could not remove the old inline bashrc block from $HOME/.bashrc"
+    # And the fzf block of the versions that installed ~/.fzf.bash: the fzf
+    # setup lives in ~/.config/shell/fzf.sh now.
+    run rc_block_drop "$HOME/.bashrc" fzf \
+        || warn "could not remove the old fzf block from $HOME/.bashrc"
+
+    install_shell_common || return 1
+    install_file "$BLERC_SRC" "$HOME/.blerc" || { err "could not install ~/.blerc"; return 1; }
+    install_file "$INPUTRC_SRC" "$HOME/.inputrc" || { err "could not install ~/.inputrc"; return 1; }
 
     if ! run rc_block "$HOME/.bashrc" bashrc "$(source_line "$MANAGED_DIR/bashrc")"; then
         err "could not update $HOME/.bashrc"
         return 1
     fi
     ok_did "bash configuration installed"
-    hint "your own additions belong in ~/.bashrc.local - it is sourced last"
-    hint "and is never written to by this script"
-    hint "run 'source ~/.bashrc' or open a new terminal to pick it up"
+    hint "your own additions belong in ~/.config/shell/local.sh (both shells)"
+    hint "or ~/.bashrc.local (bash only) - sourced last, never written to"
+    hint "ble.sh, starship and fastfetch come with the prompt step"
+    hint "run 'exec bash' or open a new terminal to pick it up"
     completed
+}
+
+# The files bash and zsh share. Called by both shell steps, so declining one
+# of them still leaves the other complete; the second call finds everything
+# up to date and copies nothing.
+#
+# They are copies of this repository, so they go in without backups, like
+# the managed rc files. local.sh is the exception in the other direction: it
+# is the user's, and the example is copied only when there is none yet.
+install_shell_common() {
+    local f name
+    need_file "$SHELL_SRC/env.sh" || return 1
+    run mkdir -p "$SHELL_DEST" || { err "could not create $SHELL_DEST"; return 1; }
+    for f in "$SHELL_SRC"/*.sh; do
+        name="$(basename "$f")"
+        copy_if_changed "$f" "$SHELL_DEST/$name" || {
+            err "could not install $SHELL_DEST/$name"
+            return 1
+        }
+    done
+    if [ ! -e "$SHELL_DEST/local.sh" ] && [ -f "$SHELL_SRC/local.sh.example" ]; then
+        run cp "$SHELL_SRC/local.sh.example" "$SHELL_DEST/local.sh" \
+            || warn "could not create $SHELL_DEST/local.sh"
+    fi
+    return 0
 }
 
 # 3. The bash LOGIN shell. ~/.bashrc alone is not enough: a console login,
@@ -942,7 +1067,63 @@ install_bash_profile() {
     completed
 }
 
-# 4. yay, built from the AUR - but only when it is not already there.
+# 4. makepkg tuned for this machine: -march=native, every core, ccache, tmpfs
+# build directory, no -debug packages, fast package compression. It comes
+# before yay on purpose - yay itself is the first thing makepkg builds.
+install_makepkg_native() {
+    log "makepkg: native code, fast builds"
+    step "installs makepkg-native.conf as $MAKEPKG_DEST"
+    step "-march=native, target-cpu=native, -j\$(nproc), ccache, BUILDDIR=/tmp/makepkg, !debug"
+    hint "packages built after this run only on this CPU generation"
+    confirm "Tune makepkg for this CPU and for build speed?" y || { skipped; return 0; }
+    need_file "$MAKEPKG_SRC" || return 1
+    ensure_sudo || return 1
+
+    # SMT switched off in the firmware halves the jobs every build gets, and
+    # nothing in the OS can turn it back on. Worth one line of warning.
+    local tpc
+    tpc="$(lscpu 2>/dev/null | awk -F: '/^Thread\(s\) per core/ {gsub(/ /, "", $2); print $2}')"
+    if [ "${tpc:-0}" = "1" ]; then
+        warn "SMT is off: $(nproc) threads on $(nproc) cores"
+        hint "enable SMT in the firmware setup (AMD: CPU Configuration -> SMT Mode)"
+        hint "for roughly 1.5-2x faster builds; MAKEFLAGS follows nproc on its own"
+    fi
+
+    local -a nc=()
+    mapfile -t nc < <(noconfirm_args)
+    run sudo pacman -S --needed "${nc[@]}" -- ccache \
+        || warn "could not install ccache - builds still work, without the cache"
+
+    if [ -f "$MAKEPKG_DEST" ] && cmp -s "$MAKEPKG_SRC" "$MAKEPKG_DEST"; then
+        ok "$MAKEPKG_DEST is already up to date"
+    else
+        if [ -f "$MAKEPKG_DEST" ]; then
+            warn "$MAKEPKG_DEST differs - keeping a backup next to it"
+            run sudo cp -p "$MAKEPKG_DEST" "$MAKEPKG_DEST.bak.$(date +%Y%m%d-%H%M%S)" || return 1
+        fi
+        run sudo install -Dm644 "$MAKEPKG_SRC" "$MAKEPKG_DEST" \
+            || { err "could not install $MAKEPKG_DEST"; return 1; }
+    fi
+
+    # The cache is per user; 20 GB holds a few kernel builds.
+    if have ccache; then
+        run ccache --max-size=20G || warn "could not set the ccache size"
+    fi
+
+    if [ "$DRY_RUN" != "1" ]; then
+        local cflags
+        cflags="$(bash -c 'source /etc/makepkg.conf; for f in /etc/makepkg.conf.d/*.conf; do source "$f"; done; printf "%s" "$CFLAGS"' 2>/dev/null || true)"
+        case "$cflags" in
+            *-march=native*) ok "makepkg now builds with -march=native" ;;
+            *) warn "CFLAGS do not contain -march=native - check $MAKEPKG_DEST"
+               hint "the stock CFLAGS no longer start with -march=x86-64 -mtune=generic?" ;;
+        esac
+    fi
+    ok_did "makepkg tuned"
+    completed
+}
+
+# 5. yay, built from the AUR - but only when it is not already there.
 install_yay() {
     log "AUR helper"
     if have yay; then
@@ -1001,7 +1182,7 @@ yay_bootstrap() (
     return 0
 )
 
-# 5. The package list.
+# 6. The package list.
 install_yay_packages() {
     log "Packages from yay-apps.txt"
     if ! have yay; then
@@ -1057,7 +1238,244 @@ install_yay_packages() {
     return 1
 }
 
-# 6. zsh: the configuration, Oh My Zsh, the three custom plugins, the mtsh
+# 7. The CachyOS kernel, built from the AUR for exactly this CPU.
+#
+# _processor_opt=native is the PKGBUILD's own switch (it enables
+# X86_NATIVE_CPU); the kernel ignores makepkg's CFLAGS, so the drop-in above
+# does not reach it. The stock `linux` stays installed as the fallback entry
+# in the boot menu - a kernel that does not boot must not be the only one.
+#
+# Not --noconfirm on an interactive run: the PKGBUILD verifies signatures,
+# and yay asks before importing the packagers' PGP keys. That question is
+# worth reading once.
+install_cachyos_kernel() {
+    log "CachyOS kernel"
+    step "builds ${CACHYOS_PKGS[*]} from the AUR with _processor_opt=native"
+    step "build directory: $(tilde "$CACHYOS_BUILDDIR") (too big for tmpfs)"
+    step "sets GRUB_TOP_LEVEL so GRUB boots it by default; linux stays as fallback"
+    hint "this compiles a whole kernel - from 20 minutes to an hour"
+    if ! have yay; then
+        warn "yay is not installed - skipping the CachyOS kernel"
+        skipped
+        return 0
+    fi
+    if pacman -Q "${CACHYOS_PKGS[0]}" >/dev/null 2>&1; then
+        ok "${CACHYOS_PKGS[0]} is already installed - 'yay -Syu' keeps it current"
+    else
+        confirm "Build and install the CachyOS kernel?" y || { skipped; return 0; }
+        ensure_sudo || return 1
+        local -a yflags=(-S --needed)
+        if [ "$ASSUME_YES" = "1" ]; then
+            yflags+=(--noconfirm --answerdiff None --answerclean All)
+        fi
+        run mkdir -p "$CACHYOS_BUILDDIR" || return 1
+        if ! run env _processor_opt=native BUILDDIR="$CACHYOS_BUILDDIR" \
+                yay "${yflags[@]}" -- "${CACHYOS_PKGS[@]}"; then
+            err "building the CachyOS kernel failed"
+            hint "the stock kernel is untouched; check the yay output above"
+            return 1
+        fi
+    fi
+
+    local grub=/etc/default/grub top='GRUB_TOP_LEVEL="/boot/vmlinuz-linux-cachyos"'
+    if [ ! -f "$grub" ]; then
+        warn "$grub not found - not a GRUB system, set the default entry yourself"
+        completed
+        return 0
+    fi
+    ensure_sudo || return 1
+    if grep -qxF "$top" "$grub"; then
+        ok "GRUB already boots linux-cachyos by default"
+    else
+        run sudo cp -p "$grub" "$grub.bak.$(date +%Y%m%d-%H%M%S)" || return 1
+        if grep -q '^GRUB_TOP_LEVEL=' "$grub"; then
+            run sudo sed -i "s|^GRUB_TOP_LEVEL=.*|$top|" "$grub" || return 1
+        else
+            run sudo sed -i "\$a $top" "$grub" || return 1
+        fi
+        run sudo grub-mkconfig -o /boot/grub/grub.cfg \
+            || { err "grub-mkconfig failed - the old grub.cfg is still in place"; return 1; }
+    fi
+    ok_did "CachyOS kernel installed and set as the default boot entry"
+    hint "reboot, then check: uname -r  and  zgrep X86_NATIVE_CPU=y /proc/config.gz"
+    completed
+}
+
+# 8. Thermalright LCD coolers (Frozen Warframe, Trofeo Vision, Assassin Spirit
+# Vision, Elite Vision and friends). The screen on the pump or the fan hub is
+# a USB device that shows nothing at all until a program feeds it frames.
+#
+# The program is TRCC Linux (AUR thermalright-trcc), a port of Thermalright's
+# own LCD Control Center: themes, sensor overlays, and the LED rings of the
+# digital coolers. Its package ships the udev rules that let a normal user
+# talk to the device, so no root service is involved.
+#
+# The ids are the ones TRCC's udev rules cover. Without one of them plugged
+# in, the step still offers the install, defaulting to no.
+TRCC_USB_IDS=(0416:5302 0416:5406 0416:5408 0416:5409 0416:8001
+              0402:3922 0418:5303 0418:5304 87ad:70db 87cd:70db)
+install_thermalright_lcd() {
+    log "Thermalright LCD (TRCC)"
+    local found default=n
+    if found="$(usb_has "${TRCC_USB_IDS[@]}")"; then
+        ok "Thermalright display found: $found"
+        default=y
+    else
+        step "no Thermalright display is plugged in"
+        if [ "$ASSUME_YES" = "1" ]; then
+            ok "--yes: not installing software for hardware that is not here"
+            skipped
+            return 0
+        fi
+    fi
+    step "installs thermalright-trcc (AUR) with NVIDIA, Wayland and HID support"
+    step "and starts it at login, minimised"
+    confirm "Install the Thermalright LCD software?" "$default" || { skipped; return 0; }
+    if ! have yay; then
+        warn "yay is not installed - thermalright-trcc comes from the AUR"
+        hint "answer yes to the yay step, or install it yourself, then re-run"
+        skipped
+        return 0
+    fi
+    ensure_sudo || return 1
+
+    local -a yflags=(-S --needed)
+    if [ "$ASSUME_YES" = "1" ]; then
+        yflags+=(--noconfirm --answerdiff None --answerclean All)
+    fi
+    # python-nvidia-ml-py: GPU temperature and load on the display (RTX).
+    # python-dbus and python-gobject: the Wayland session. python-hidapi: the
+    # HID transport for the 0416:5302 family.
+    run yay "${yflags[@]}" -- thermalright-trcc python-nvidia-ml-py \
+            python-dbus python-gobject python-hidapi \
+        || { err "could not install thermalright-trcc"; return 1; }
+
+    # The rules only apply to devices that appear AFTER they are loaded;
+    # trigger replays the add event for the display that is already there.
+    if ! in_container && have udevadm; then
+        run sudo udevadm control --reload-rules || warn "udevadm --reload-rules failed"
+        run sudo udevadm trigger --subsystem-match=usb --subsystem-match=hidraw \
+            || warn "udevadm trigger failed - replug the cooler's USB cable"
+    fi
+
+    local desktop=/usr/share/applications/trcc-linux.desktop
+    if [ -f "$desktop" ] || [ "$DRY_RUN" = "1" ]; then
+        autostart_entry trcc-linux "$(awk -F= '/^Exec=/ {sub(/^Exec=/, ""); print; exit}' "$desktop" 2>/dev/null || echo trcc)" \
+            "Thermalright LCD Control Center" || warn "could not create the autostart entry"
+    fi
+    ok_did "TRCC installed"
+    hint "check the device with: trcc report"
+    hint "pick a theme in the TRCC window; it keeps driving the screen from the tray"
+    completed
+}
+
+# 9. ARGB through OpenRGB.
+#
+# Gigabyte boards drive their RGB and ARGB headers from an ITE controller on
+# USB (048d:5702 "RGB Fusion 2"; 048d:8297 and 048d:5711 on other boards),
+# and OpenRGB speaks its protocol. Fans and strips on the board's ARGB
+# headers are therefore OpenRGB's; a cooler with its own Thermalright LED
+# controller (0416:8001) belongs to TRCC instead.
+#
+# RGB memory sits on the SMBus and needs i2c-dev, which is not loaded by
+# default; i2c-piix4 (AMD) or i2c-i801 (Intel) load themselves. The package
+# ships 60-openrgb.rules, which hands the USB, HID and i2c devices to the
+# logged-in user.
+OPENRGB_USB_IDS=(048d:5702 048d:5711 048d:8297)
+install_openrgb() {
+    log "ARGB lighting (OpenRGB)"
+    local found default=n
+    if found="$(usb_has "${OPENRGB_USB_IDS[@]}")"; then
+        ok "Gigabyte RGB Fusion 2 controller found: $found"
+        default=y
+    else
+        step "no known RGB controller found on USB"
+        if [ "$ASSUME_YES" = "1" ]; then
+            ok "--yes: not installing software for hardware that is not here"
+            skipped
+            return 0
+        fi
+    fi
+    step "installs openrgb, loads i2c-dev at boot (RGB memory) and starts"
+    step "OpenRGB at login with the profile named 'default'"
+    confirm "Install OpenRGB?" "$default" || { skipped; return 0; }
+    ensure_sudo || return 1
+
+    local -a nc=()
+    mapfile -t nc < <(noconfirm_args)
+    run sudo pacman -S --needed "${nc[@]}" -- openrgb i2c-tools \
+        || { err "could not install openrgb"; return 1; }
+
+    local modconf=/etc/modules-load.d/i2c-dev.conf
+    if [ -f "$modconf" ] && grep -qx 'i2c-dev' "$modconf"; then
+        ok "i2c-dev is already loaded at boot"
+    else
+        run sudo sh -c "printf 'i2c-dev\n' > $modconf" \
+            || warn "could not write $modconf - RGB memory will not be found"
+    fi
+    if ! in_container; then
+        run sudo modprobe i2c-dev || warn "could not load i2c-dev now - it loads at the next boot"
+        if have udevadm; then
+            run sudo udevadm control --reload-rules || true
+            run sudo udevadm trigger || true
+        fi
+    fi
+
+    # --profile names a profile that the user saves once, from the GUI. Until
+    # then OpenRGB starts, finds the profile missing, and changes nothing.
+    autostart_entry openrgb "openrgb --startminimized --profile default" \
+        "Apply the saved ARGB profile" || warn "could not create the autostart entry"
+    ok_did "OpenRGB installed"
+    hint "open OpenRGB, set the colours, then Profiles -> Save as 'default'"
+    hint "check what it sees with: openrgb --list-devices"
+    completed
+}
+
+# 10. The audio profile: PipeWire at the material's native rate, WirePlumber with
+# a better resampler and no sink suspend, the AutoEq switcher with its
+# impulses, and the M20 drop logger. docs/AUDIO.md has the why.
+#
+# Everything goes into $HOME and nothing is forced per card, so the profile
+# is safe on any hardware: the rules match every alsa_output, and allowed-rates
+# is trimmed by PipeWire to what each card can do.
+install_audio_profile() {
+    log "Audio profile (PipeWire, WirePlumber, AutoEq)"
+    local pw="$XDG_CONFIG_DIR/pipewire/pipewire.conf.d"
+    local wp="$XDG_CONFIG_DIR/wireplumber/wireplumber.conf.d"
+    local eq="$HOME/.local/share/autoeq/denon"
+    step "audio/pipewire/99-audiophile.conf    -> $(tilde "$pw")/"
+    step "audio/wireplumber/99-audiophile.conf -> $(tilde "$wp")/"
+    step "audio/autoeq/denon/ -> $(tilde "$eq")/, autoeq and m20-dropwatch -> ~/.local/bin/"
+    confirm "Install the audio profile?" y || { skipped; return 0; }
+    need_file "$AUDIO_SRC/pipewire/99-audiophile.conf" || return 1
+    need_file "$AUDIO_SRC/wireplumber/99-audiophile.conf" || return 1
+
+    run mkdir -p "$pw" "$wp" "$eq" "$HOME/.local/bin" || return 1
+    install_file "$AUDIO_SRC/pipewire/99-audiophile.conf" "$pw/99-audiophile.conf" || return 1
+    install_file "$AUDIO_SRC/wireplumber/99-audiophile.conf" "$wp/99-audiophile.conf" || return 1
+
+    local f
+    for f in "$AUDIO_SRC"/autoeq/denon/*; do
+        copy_if_changed "$f" "$eq/$(basename "$f")" || return 1
+    done
+    for f in "$AUDIO_SRC"/bin/*; do
+        install_file "$f" "$HOME/.local/bin/$(basename "$f")" || return 1
+        run chmod 755 "$HOME/.local/bin/$(basename "$f")" || return 1
+    done
+
+    # The new files only apply to a restarted PipeWire. Nothing to restart
+    # in a container, or before the user session exists.
+    if ! in_container && systemctl --user is-active --quiet pipewire 2>/dev/null; then
+        run systemctl --user restart pipewire pipewire-pulse wireplumber \
+            || warn "could not restart PipeWire - log out and back in"
+    fi
+    ok_did "audio profile installed"
+    hint "AutoEq is off; turn it on with: autoeq D5200  (autoeq sinks lists the outputs)"
+    hint "check the clock with: pw-metadata -n settings | grep rate"
+    completed
+}
+
+# 11. zsh: the configuration, Oh My Zsh, the custom plugins, the mtsh
 #    theme, and - only if asked - the login shell.
 #
 #    podman_base clones exactly these repositories at build time
@@ -1068,8 +1486,8 @@ install_yay_packages() {
 install_zsh() {
     log "Zsh configuration"
     step "installs zshrc as $(tilde "$MANAGED_DIR")/zshrc, sourced from ~/.zshrc"
-    step "installs Oh My Zsh, zsh-autosuggestions, zsh-syntax-highlighting,"
-    step "fzf-tab and the mtsh theme into $(tilde "$OMZ_DIR")"
+    step "installs Oh My Zsh, fzf-tab, zsh-autosuggestions, fast-syntax-highlighting,"
+    step "zsh-history-substring-search and the mtsh theme into $(tilde "$OMZ_DIR")"
     confirm "Install the zsh configuration?" y || { skipped; return 0; }
     need_file "$ZSHRC_SRC" || return 1
 
@@ -1087,6 +1505,7 @@ install_zsh() {
         err "could not install $MANAGED_DIR/zshrc"
         return 1
     }
+    install_shell_common || return 1
 
     # ZDOTDIR, when set, is where zsh looks for .zshrc; writing to ~/.zshrc
     # would then configure a file zsh never reads.
@@ -1102,8 +1521,9 @@ install_zsh() {
         return 1
     fi
     ok_did "zsh configuration installed"
-    hint "your own additions belong in ~/.zshrc.local - it is sourced last"
-    hint "and is never written to by this script"
+    hint "your own additions belong in ~/.config/shell/local.sh (both shells)"
+    hint "or ~/.zshrc.local (zsh only) - sourced last, never written to"
+    hint "switch the prompt with: prompt-use starship | prompt-use mtsh"
 
     # --- Oh My Zsh and its plugins -------------------------------------------
     if ! have git; then
@@ -1169,7 +1589,7 @@ install_zsh() {
         hint "check the network and re-run this step; the login shell is left alone"
         return 1
     fi
-    ok "Oh My Zsh, the three plugins and the mtsh theme are in place"
+    ok "Oh My Zsh, the ${#OMZ_PLUGIN_REPOS[@]} plugins and the mtsh theme are in place"
     hint "the mtsh theme needs a powerline font selected in your terminal emulator"
 
     # --- the login shell, which is the one thing that can lock somebody out --
@@ -1270,7 +1690,7 @@ install_login_shell() {
     return 0
 }
 
-# 7. An SSH key - generated only when there is not one already.
+# 12. An SSH key - generated only when there is not one already.
 install_sshkey() {
     local key="$HOME/.ssh/id_ed25519"
     log "SSH key"
@@ -1323,52 +1743,7 @@ install_sshkey() {
     completed
 }
 
-# 8. Docker group membership and the service.
-install_docker_configuration() {
-    log "Docker configuration"
-    if ! have docker; then
-        warn "docker is not installed - nothing to configure"
-        hint "docker comes from $PKG_LIST; run the package step first"
-        skipped
-        return 0
-    fi
-
-    warn "membership of the docker group is equivalent to passwordless root"
-    hint "anyone in it can mount / into a container and edit anything"
-    confirm "Add $USER_NAME to the docker group and enable the service?" y \
-        || { skipped; return 0; }
-    ensure_sudo || return 1
-
-    # groupadd returns 9 when the group exists, which under `set -e` would end
-    # the run; the group is usually created by the docker package anyway.
-    if getent group docker >/dev/null 2>&1; then
-        dbg "group docker already exists"
-    else
-        run sudo groupadd docker || { err "groupadd docker failed"; return 1; }
-    fi
-
-    if id -nG "$USER_NAME" 2>/dev/null | grep -qw docker; then
-        ok "$USER_NAME is already in the docker group"
-    else
-        run sudo usermod -aG docker "$USER_NAME" \
-            || { err "could not add $USER_NAME to the docker group"; return 1; }
-        warn "group membership only applies to new logins"
-        hint "run 'newgrp docker' or log out and back in"
-    fi
-
-    if in_container || ! have_systemd; then
-        warn "no systemd here - not enabling docker.service"
-    else
-        # docker.service pulls in containerd itself on Arch, so enabling
-        # containerd separately is redundant.
-        run sudo systemctl enable --now docker.service \
-            || { err "could not enable docker.service"; return 1; }
-        ok_did "docker.service enabled and started"
-    fi
-    completed
-}
-
-# 9. libvirt / KVM: group membership, the socket, and the default network.
+# 13. libvirt / KVM: group membership, the socket, and the default network.
 #
 # Replaces the VirtualBox step. The two are not configured the same way and the
 # difference is worth stating: VirtualBox needed an out-of-tree module built by
@@ -1485,55 +1860,106 @@ install_libvirt_configuration() {
     completed
 }
 
-# 10. fzf.
-install_fzf() {
-    log "fzf"
-    confirm "Install fzf and its shell integration?" y || { skipped; return 0; }
-    need_file "$FZF_SRC" || return 1
+# 14. The prompt and the tools around it: starship, fastfetch, ble.sh, and the
+# pkgfile database zsh's command-not-found plugin answers from.
+#
+# The programs themselves come from the package step (starship, fastfetch,
+# fzf, zoxide, eza, bat, fd, git-delta, pkgfile); this step installs their
+# configuration, plus ble.sh, which has no repository package.
+install_prompt_tools() {
+    log "Prompt, greeting and line editor"
+    step "starship.toml -> $(tilde "$XDG_CONFIG_DIR")/starship.toml"
+    step "fastfetch/config.jsonc -> $(tilde "$XDG_CONFIG_DIR")/fastfetch/config.jsonc"
+    step "ble.sh nightly -> $(tilde "$BLESH_DIR")"
+    confirm "Install the prompt, the greeting and ble.sh?" y || { skipped; return 0; }
+    need_file "$STARSHIP_SRC" || return 1
+    need_file "$FASTFETCH_SRC" || return 1
 
-    if have fzf; then
-        # fzf is a normal [extra] package; when the package list already
-        # installed it there is nothing to clone.
-        ok "fzf is already installed - only refreshing the shell integration"
-    elif [ -d "$HOME/.fzf" ]; then
-        # The old unconditional clone failed here on every second run.
-        ok "$HOME/.fzf already exists - updating it instead of cloning"
-        run git -C "$HOME/.fzf" pull --ff-only \
-            || warn "could not update $HOME/.fzf (local changes?), using it as is"
-        # --no-update-rc: this repository ships its own fzf.bash, and letting
-        # the installer append to ~/.bashrc as well made that file grow on
-        # every run.
-        run "$HOME/.fzf/install" --key-bindings --completion --no-update-rc \
-            || { err "the fzf installer failed"; return 1; }
+    install_file "$STARSHIP_SRC" "$XDG_CONFIG_DIR/starship.toml" \
+        || { err "could not install starship.toml"; return 1; }
+    run mkdir -p "$XDG_CONFIG_DIR/fastfetch" || return 1
+    install_file "$FASTFETCH_SRC" "$XDG_CONFIG_DIR/fastfetch/config.jsonc" \
+        || { err "could not install the fastfetch configuration"; return 1; }
+
+    local t
+    for t in starship fastfetch fzf zoxide eza bat fd delta; do
+        have "$t" || warn "$t is not installed yet - it comes from $PKG_LIST"
+    done
+
+    # ble.sh is replaced wholesale rather than updated in place: ble-update
+    # needs a git checkout, and the tarball is a few hundred kilobytes.
+    if [ -r "$BLESH_DIR/ble.sh" ]; then
+        ok "ble.sh is already installed - update it from bash with: ble-update"
+    elif ! have curl || ! have tar; then
+        warn "curl or tar is missing - skipping ble.sh; bash works without it"
     else
-        run git clone --depth 1 https://github.com/junegunn/fzf.git "$HOME/.fzf" \
-            || { err "could not clone fzf"; return 1; }
-        run "$HOME/.fzf/install" --key-bindings --completion --no-update-rc \
-            || { err "the fzf installer failed"; return 1; }
+        step "downloading ble.sh into $(tilde "$BLESH_DIR")"
+        run blesh_bootstrap || { err "could not install ble.sh"; return 1; }
     fi
 
-    install_file "$FZF_SRC" "$HOME/.fzf.bash" || return 1
-
-    # Installing ~/.fzf.bash is pointless unless something sources it. The
-    # bashrc in this repository does that itself now, so the block earlier
-    # versions added to ~/.bashrc would only source the same file twice - it
-    # is removed when the managed bashrc is in place, and still written when
-    # it is not, so declining the bash step does not silently disable fzf.
-    if [ -f "$MANAGED_DIR/bashrc" ]; then
-        run rc_block_drop "$HOME/.bashrc" fzf \
-            || warn "could not remove the old fzf block from $HOME/.bashrc"
-        dbg "the managed bashrc sources ~/.fzf.bash - no separate block needed"
-    else
-        run rc_block "$HOME/.bashrc" fzf "$(source_line "$HOME/.fzf.bash")" \
-            || { err "could not add the fzf hook to ~/.bashrc"; return 1; }
+    if have pkgfile; then
+        ensure_sudo || return 1
+        run sudo pkgfile --update \
+            || warn "pkgfile --update failed - command-not-found will stay quiet until it runs"
     fi
-    # zsh does not read ~/.fzf.bash at all - it is bash syntax. The zshrc in
-    # this repository sources fzf's own zsh integration instead.
-    ok_did "fzf configuration installed"
+    ok_did "prompt tools configured"
+    hint "zsh uses the mtsh theme by default; 'prompt-use starship' switches"
     completed
 }
 
-# 11. The RAM disk symlink.
+# Download and unpack the ble.sh tarball in a temporary directory, then move
+# it into place. Subshell for the EXIT trap, as in yay_bootstrap.
+blesh_bootstrap() (
+    local tmpdir
+    tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/setup-dotfiles-blesh.XXXXXX")" || return 1
+    trap 'rm -rf "$tmpdir"' EXIT
+    curl -fsSL "$BLESH_URL" | tar -xJ -C "$tmpdir" || return 1
+    [ -r "$tmpdir/ble-nightly/ble.sh" ] || return 1
+    mkdir -p "$BLESH_DIR" || return 1
+    cp -r "$tmpdir/ble-nightly/." "$BLESH_DIR/" || return 1
+    return 0
+)
+
+# 15. Konsole: a profile with the Nerd Font, the Catppuccin Mocha colours, and
+# that profile as the default.
+#
+# The Font= line is in the Qt 6 format (16 fields, weight 400). Konsole on
+# Qt 5 reads only 10 fields with weight on a 0-99 scale and renders a Qt 6
+# line with the wrong weight and metrics; every current Arch Konsole is Qt 6.
+# "Nerd Font Mono", not "Nerd Font": the non-Mono icons are wider than one
+# cell and push the columns out of line.
+install_konsole() {
+    log "Konsole profile"
+    if ! have konsole; then
+        ok "Konsole is not installed - nothing to configure"
+        skipped
+        return 0
+    fi
+    local dest="$HOME/.local/share/konsole"
+    step "konsole/Mok.profile and CatppuccinMocha.colorscheme -> $(tilde "$dest")/"
+    step "and Mok.profile as the default profile in konsolerc"
+    confirm "Install the Konsole profile?" y || { skipped; return 0; }
+    need_file "$KONSOLE_SRC/Mok.profile" || return 1
+    need_file "$KONSOLE_SRC/CatppuccinMocha.colorscheme" || return 1
+
+    run mkdir -p "$dest" || return 1
+    install_file "$KONSOLE_SRC/Mok.profile" "$dest/Mok.profile" || return 1
+    install_file "$KONSOLE_SRC/CatppuccinMocha.colorscheme" "$dest/CatppuccinMocha.colorscheme" || return 1
+
+    local kw=""
+    if have kwriteconfig6; then kw=kwriteconfig6; elif have kwriteconfig5; then kw=kwriteconfig5; fi
+    if [ -n "$kw" ]; then
+        run "$kw" --file konsolerc --group "Desktop Entry" --key DefaultProfile Mok.profile \
+            || warn "could not set the default profile - pick Mok in Settings -> Manage Profiles"
+    else
+        warn "no kwriteconfig - pick Mok in Konsole: Settings -> Manage Profiles"
+    fi
+    ok_did "Konsole profile installed"
+    hint "Konsole reads profiles at start - close every Konsole window first"
+    completed
+}
+
+# 16. The RAM disk symlink.
 install_ram_disk() {
     log "RAM disk shortcut"
     step "$RAMDISC_LINK -> $RAMDISC_TARGET (tmpfs, cleared on reboot)"
@@ -1563,7 +1989,7 @@ install_ram_disk() {
     completed
 }
 
-# 12. tmux, and the tpm plugins ~/.tmux.conf expects to find.
+# 17. tmux, and the tpm plugins ~/.tmux.conf expects to find.
 install_tmux() {
     log "tmux configuration"
     step "installs $TMUX_SRC as ~/.tmux.conf (existing file is backed up)"
@@ -1621,7 +2047,7 @@ tpm_install() (
     return "$rc"
 )
 
-# 13. Neovim: the configuration tree, then everything it needs from the
+# 18. Neovim: the configuration tree, then everything it needs from the
 #     network - plugins, language servers, tree-sitter parsers.
 #
 #     This is the step where "the host has internet" stops being a footnote.
@@ -1732,7 +2158,7 @@ nvim_tree_matches() {
     return 0
 }
 
-# 14. Global git configuration.
+# 19. Global git configuration.
 install_git_rules() {
     log "Global git configuration"
     if ! have git; then
@@ -1807,7 +2233,7 @@ install_git_rules() {
     completed
 }
 
-# 15. Tailscale.
+# 20. Tailscale.
 install_tailscale() {
     log "Tailscale"
     # The upstream one-liner piped a remote script into a root shell and then
@@ -1838,7 +2264,7 @@ install_tailscale() {
     completed
 }
 
-# 16. Final upgrade and cache trim.
+# 21. Final upgrade and cache trim.
 post_installation() {
     log "Post-installation"
     confirm "Run a final upgrade and trim the package cache?" y || { skipped; return 0; }
@@ -1923,13 +2349,18 @@ main() {
     do_step "system update" install_update_and_upgrade
     do_step "bashrc"        install_bashrc
     do_step "bash profile"  install_bash_profile
+    do_step "makepkg"       install_makepkg_native
     do_step "yay"           install_yay
     do_step "packages"      install_yay_packages
+    do_step "cachyos kernel" install_cachyos_kernel
+    do_step "thermalright lcd" install_thermalright_lcd
+    do_step "rgb"           install_openrgb
+    do_step "audio"         install_audio_profile
     do_step "zsh"           install_zsh
     do_step "ssh key"       install_sshkey
-    do_step "docker"        install_docker_configuration
     do_step "libvirt"       install_libvirt_configuration
-    do_step "fzf"           install_fzf
+    do_step "prompt"        install_prompt_tools
+    do_step "konsole"       install_konsole
     do_step "ram disk"      install_ram_disk
     do_step "tmux"          install_tmux
     do_step "neovim"        install_neovim

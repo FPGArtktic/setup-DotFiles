@@ -87,7 +87,7 @@ RUN pacman -Sy --noconfirm --needed archlinux-keyring \
 #               dropped from the official repositories, and this is what the
 #               bashrc falls back to
 #     ripgrep / fd / bat
-#               optional accelerators that fzf.bash probes for. Without them
+#               optional accelerators that shell/fzf.sh probes for. Without them
 #               the file silently takes its fallback branches and a smoke test
 #               never exercises the paths people actually run.
 #
@@ -144,7 +144,7 @@ RUN groupadd -g "${DOT_GID}" "${DOT_USER}" \
 # ---------------------------------------------------------------------------
 #  5. Trusting the bind-mounted checkout
 #     git refuses to operate inside a directory owned by somebody else, and
-#     under docker - or rootless podman without --userns=keep-id - /app is
+#     under rootful podman - or rootless podman without --userns=keep-id - /app is
 #     exactly that. The refusal surfaces as "detected dubious ownership",
 #     which reads like a repository problem and stops the git steps dead. A
 #     blanket exemption is acceptable in a throwaway test box and nowhere
@@ -188,13 +188,10 @@ RUN rm -rf /var/cache/pacman/pkg/* \
 #  8. What this box deliberately cannot test
 #
 #     There is no systemd here - PID 1 is bash, not an init - so every
-#     `systemctl` call in install_docker_configuration and the tailscale step
-#     will fail, and that is not a defect in the image. A run inside a
-#     container should notice where it is and skip them; both engines leave a
-#     marker for exactly this purpose:
-#
-#         podman   /run/.containerenv
-#         docker   /.dockerenv
+#     `systemctl` call in the libvirt and tailscale steps will fail, and that
+#     is not a defect in the image. A run inside a container should notice
+#     where it is and skip them; podman leaves a marker for exactly this
+#     purpose: /run/.containerenv
 #
 #     Kernel packages, VirtualBox modules and anything that wants a real
 #     /sys are in the same category: out of scope by construction, not

@@ -1,0 +1,13 @@
+# shellcheck shell=bash
+# ===========================================================================
+#  blerc - ble.sh settings for bash
+#  Installed by setup-dotFiles.sh as ~/.blerc.
+#  Documentation: ~/.local/share/blesh/doc
+# ===========================================================================
+bleopt complete_auto_delay=200        # suggestions after 200 ms
+bleopt complete_menu_style=desc       # completion menu with descriptions
+bleopt exec_errexit_mark=             # starship shows the exit status
+bleopt exec_elapsed_mark=             # starship shows the elapsed time
+bleopt prompt_eol_mark=$'\e[94m⏎\e[m'
+bleopt edit_abell=                    # no bell
+ble-face -s auto_complete fg=8        # grey suggestion, like zsh-autosuggestions

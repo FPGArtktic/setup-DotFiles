@@ -1,0 +1,169 @@
+# ===========================================================================
+#  starship.toml - prompt shared by bash and zsh
+#  Installed by setup-dotFiles.sh as ~/.config/starship.toml.
+#
+#  Colours are ANSI names (red, blue, ...), so the prompt follows the
+#  terminal palette. The icons need a Nerd Font (JetBrainsMono Nerd Font Mono).
+#
+#   ╭─ ~/git/projekt  master ✚2 ?1  sdk:aarch64  took 3s  12:04
+#   ╰─❯
+# ===========================================================================
+
+"$schema" = 'https://starship.rs/config-schema.json'
+add_newline = true
+command_timeout = 800      # huge trees (buildroot, yocto) must not block the prompt
+scan_timeout = 30
+
+format = """
+[╭─](bright-black)$os$username$hostname$container${env_var.APPTAINER_CONTAINER}$directory\
+$git_branch$git_commit$git_state$git_status\
+${env_var.OECORE_TARGET_ARCH}${env_var.BUILDDIR}${env_var.CROSS_COMPILE}\
+$python$c$rust$cmake$nodejs\
+$jobs$cmd_duration$status$time
+[╰─](bright-black)$character"""
+
+[os]
+disabled = false
+style = "bold blue"
+format = "[$symbol]($style) "
+
+[os.symbols]
+Arch = ""
+Ubuntu = ""
+Debian = ""
+Fedora = ""
+Linux = ""
+
+[username]
+style_user = "bold yellow"
+style_root = "bold red"
+format = "[$user]($style)"
+show_always = false        # only over SSH or as root
+
+[hostname]
+ssh_only = true
+style = "bold green"
+format = "[@$hostname]($style) "
+
+[container]
+style = "bold red"
+format = "[⬢ $name]($style) "
+
+[directory]
+style = "bold cyan"
+read_only = " 󰌾"
+read_only_style = "red"
+truncation_length = 4
+truncate_to_repo = true
+truncation_symbol = "…/"
+format = "[$path]($style)[$read_only]($read_only_style) "
+
+[git_branch]
+symbol = " "
+style = "bold purple"
+format = "[$symbol$branch(:$remote_branch)]($style) "
+truncation_length = 32
+
+[git_commit]
+tag_disabled = false
+tag_symbol = "  "
+style = "purple"
+
+[git_state]
+style = "bold yellow"
+format = '\([$state( $progress_current/$progress_total)]($style)\) '
+
+[git_status]
+style = "yellow"
+ignore_submodules = true
+format = '([$all_status$ahead_behind]($style) )'
+conflicted = "=$count "
+ahead = "⇡$count "
+behind = "⇣$count "
+diverged = "⇕⇡$ahead_count⇣$behind_count "
+untracked = "?$count "
+stashed = "≡$count "
+modified = "●$count "
+staged = "[✚$count ](green)"
+renamed = "»$count "
+deleted = "✘$count "
+
+# --- embedded: toolchain environments ----------------------------------------
+[env_var.OECORE_TARGET_ARCH]          # after `source environment-setup-*` (Yocto SDK)
+variable = "OECORE_TARGET_ARCH"
+style = "bold yellow"
+format = "[ sdk:$env_value]($style) "
+
+[env_var.BUILDDIR]                    # after `source oe-init-build-env`
+variable = "BUILDDIR"
+style = "bold yellow"
+format = "[ bitbake]($style) "
+
+[env_var.CROSS_COMPILE]
+variable = "CROSS_COMPILE"
+style = "yellow"
+format = "[ $env_value]($style) "
+
+[env_var.APPTAINER_CONTAINER]
+variable = "APPTAINER_CONTAINER"
+style = "bold red"
+format = "[󰆧 apptainer]($style) "
+
+# --- languages ---------------------------------------------------------------
+[python]
+symbol = " "
+style = "green"
+format = '[$symbol($version )(\($virtualenv\) )]($style)'
+
+[c]
+symbol = " "
+style = "blue"
+format = "[$symbol($version )]($style)"
+detect_extensions = ["c", "h"]
+detect_files = []
+
+[rust]
+symbol = " "
+style = "red"
+format = "[$symbol($version )]($style)"
+
+[cmake]
+symbol = "△ "
+style = "blue"
+format = "[$symbol($version )]($style)"
+
+[nodejs]
+symbol = " "
+style = "green"
+format = "[$symbol($version )]($style)"
+
+# --- state -------------------------------------------------------------------
+[jobs]
+symbol = " "
+style = "blue"
+number_threshold = 1
+format = "[$symbol$number]($style) "
+
+[cmd_duration]
+min_time = 2000
+style = "yellow"
+format = "[ $duration]($style) "
+
+[status]
+disabled = false
+pipestatus = true
+symbol = "✘"
+style = "bold red"
+format = "[$symbol $status]($style) "
+pipestatus_format = "[$pipestatus]($style) "
+
+[time]
+disabled = false
+style = "bright-black"
+time_format = "%H:%M"
+format = "[ $time]($style)"
+
+[character]
+success_symbol = "[❯](bold green)"
+error_symbol = "[❯](bold red)"
+vimcmd_symbol = "[❮](bold green)"

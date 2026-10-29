@@ -42,20 +42,34 @@ curl
 openssh
 
 # --- kernels and firmware ---------------------------------------------------
-# Four kernels is deliberate on this machine (stock, hardened, LTS, zen).
-# Since VirtualBox went away there is no out-of-tree module left that has to be
-# rebuilt for each of them - KVM is in the kernel itself - so the -headers
-# packages are now only needed if you build DKMS modules of your own. They are
-# kept because compiling anything against a running kernel wants them.
+# Stock and LTS from the repositories. The everyday kernel is linux-cachyos,
+# built from the AUR by its own step (it needs makepkg tuned first and takes a
+# while), so it is not on this list. hardened and zen are gone: with
+# nvidia-open-dkms every installed kernel is one more module build on each
+# driver update.
 linux
 linux-headers
 linux-lts
-linux-hardened
-linux-hardened-headers
-linux-hardened-docs
-linux-zen
+linux-lts-headers
 linux-firmware
+linux-firmware-amd
 linux-firmware-intel
+# clang, llvm and lld: linux-cachyos is built with clang and ThinLTO, and DKMS
+# has to build the NVIDIA module for it with the same compiler.
+clang
+llvm
+lld
+# ccache: makepkg-native.conf turns it on for every build.
+ccache
+
+# --- GPU: NVIDIA (RTX 50 series needs the open kernel modules) ---------------
+# nvidia-open-dkms rather than nvidia-open: the prebuilt module only matches
+# the stock kernel, DKMS builds it for linux-cachyos and linux-lts too.
+nvidia-open-dkms
+nvidia-utils
+lib32-nvidia-utils
+# CDI for podman: `nvidia-ctk cdi generate`, then --device nvidia.com/gpu=all.
+nvidia-container-toolkit
 
 # --- editors and terminal ---------------------------------------------------
 # neovim is THE editor of this configuration: the whole .config/nvim tree
@@ -69,6 +83,9 @@ vim-runtime
 nano
 tmux
 mc
+# konsole: the terminal the konsole step configures (Nerd Font, Catppuccin
+# Mocha). plasma-meta does not pull it in.
+konsole
 
 # --- development ------------------------------------------------------------
 git
@@ -79,29 +96,18 @@ lazygit
 visual-studio-code-bin
 
 # --- containers and application sandboxing ----------------------------------
-docker
-docker-buildx
-docker-compose
-containerd
-containers-common
+# podman only, no docker. podman is rootless and daemonless: there is no
+# service to enable and no "docker" group, whose membership is equivalent to
+# passwordless root. bashrc and zshrc alias docker to podman and docker-compose
+# to podman-compose, so old commands and notes keep working.
 podman
 podman-compose
 podman-desktop
-# podman-tui: AUR. This is the closest thing to a "lazypodman" - no package,
-# repository or upstream project by that name exists anywhere, so do not go
-# looking for it. lazydocker (below) also drives podman perfectly well once
-# DOCKER_HOST points at the podman socket.
+containers-common
+# podman-tui: AUR. Terminal UI for podman.
 podman-tui
-# lazydocker: [extra]. Terminal UI for docker, and for podman via DOCKER_HOST.
-lazydocker
 distrobox
 flatpak
-# docker-machine was deprecated and archived upstream in 2021 - `docker
-# compose` v2 (the docker-compose package above) and `podman machine` do its
-# job now. It still builds and still lives in [extra], and it was on this list
-# from the start, so it stays. Delete the line if you no longer drive a legacy
-# VM-backed engine with it.
-docker-machine
 
 # --- virtualisation: KVM / QEMU / libvirt -----------------------------------
 # VirtualBox was replaced by the native stack. VirtualBox needs an out-of-tree
@@ -196,6 +202,22 @@ net-tools
 # opt-in step; that step should install it with pacman rather than piping a
 # remote installer into a root shell.
 
+# --- audio -------------------------------------------------------------------
+# The audio step's profile (docs/AUDIO.md) is written for PipeWire and
+# WirePlumber. alsa-utils brings amixer - the only way to read or set the
+# M20's hardware mute - and alsa-restore.service, which keeps the mixer state
+# across reboots. wiremix and pwvucontrol (AUR) are mixers; strawberry is the
+# bit-perfect music player.
+pipewire
+pipewire-pulse
+pipewire-alsa
+pipewire-jack
+wireplumber
+alsa-utils
+wiremix
+pwvucontrol
+strawberry
+
 # --- monitoring and diagnostics ---------------------------------------------
 htop
 atop
@@ -212,6 +234,11 @@ ncdu
 # the old FUSE implementation, deprecated upstream in favour of the in-kernel
 # exFAT driver that exfatprogs is built for.
 exfatprogs
+# btrfs snapshots: snapper, not timeshift. grub-btrfs lists the snapper
+# snapshots in the boot menu, and snap-pac takes a pre/post pair around every
+# pacman transaction, so a bad upgrade is one reboot away from undone.
+snapper
+snap-pac
 grub-btrfs
 gnome-disk-utility
 
@@ -272,6 +299,16 @@ eza
 git-delta
 btop
 fzf
+# starship: the prompt (starship.toml); bash always, zsh after `prompt-use
+# starship`. zoxide: `z <fragment>` and `zi`, wired into both rc files.
+starship
+zoxide
+# pkgfile: the database Oh My Zsh's command-not-found plugin asks which
+# package provides a missing command. The prompt step runs `pkgfile --update`.
+pkgfile
+# The Nerd Font the Konsole profile, starship and eza --icons expect. The
+# Mono variant: the others draw icons wider than a terminal cell.
+ttf-jetbrains-mono-nerd
 jq
 tree
 lynx
