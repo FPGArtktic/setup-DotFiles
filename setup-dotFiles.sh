@@ -615,6 +615,54 @@ logged() {
     return "$rc"
 }
 
+# usb_has - is a USB device with one of these vendor:product ids plugged in?
+#
+#   usb_has 0416:5302 0402:3922
+#
+# Read from sysfs rather than lsusb, which is in usbutils and not installed
+# on a fresh system. Prints the first id that matched.
+usb_has() {
+    local d id want
+    for d in /sys/bus/usb/devices/*; do
+        [ -r "$d/idVendor" ] && [ -r "$d/idProduct" ] || continue
+        id="$(cat "$d/idVendor"):$(cat "$d/idProduct")"
+        for want in "$@"; do
+            if [ "${id,,}" = "${want,,}" ]; then
+                printf '%s\n' "$id"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+# autostart_entry - an XDG autostart entry, written only when there is none,
+# so an entry the user has edited (or disabled with Hidden=true) survives a
+# reinstall.
+autostart_entry() {
+    local name="$1" exec_line="$2" comment="$3"
+    local file="$XDG_CONFIG_DIR/autostart/$name.desktop"
+    if [ -e "$file" ]; then
+        ok "autostart entry $(tilde "$file") already exists - left alone"
+        return 0
+    fi
+    run mkdir -p "$XDG_CONFIG_DIR/autostart" || return 1
+    run write_file "$file" "[Desktop Entry]
+Type=Application
+Name=$name
+Comment=$comment
+Exec=$exec_line
+Terminal=false
+X-GNOME-Autostart-enabled=true
+" || return 1
+}
+
+# write_file - put a string into a file. A function of its own so that it can
+# go through run() and be shown, not done, under --dry-run.
+write_file() {
+    printf '%s' "$2" > "$1"
+}
+
 # read_pkg_list - one package name per line, blank lines and #-comments
 # dropped, duplicates dropped.
 #
@@ -1237,6 +1285,134 @@ install_cachyos_kernel() {
     fi
     ok_did "CachyOS kernel installed and set as the default boot entry"
     hint "reboot, then check: uname -r  and  zgrep X86_NATIVE_CPU=y /proc/config.gz"
+    completed
+}
+
+# Thermalright LCD coolers (Frozen Warframe, Trofeo Vision, Assassin Spirit
+# Vision, Elite Vision and friends). The screen on the pump or the fan hub is
+# a USB device that shows nothing at all until a program feeds it frames.
+#
+# The program is TRCC Linux (AUR thermalright-trcc), a port of Thermalright's
+# own LCD Control Center: themes, sensor overlays, and the LED rings of the
+# digital coolers. Its package ships the udev rules that let a normal user
+# talk to the device, so no root service is involved.
+#
+# The ids are the ones TRCC's udev rules cover. Without one of them plugged
+# in, the step still offers the install, defaulting to no.
+TRCC_USB_IDS=(0416:5302 0416:5406 0416:5408 0416:5409 0416:8001
+              0402:3922 0418:5303 0418:5304 87ad:70db 87cd:70db)
+install_thermalright_lcd() {
+    log "Thermalright LCD (TRCC)"
+    local found default=n
+    if found="$(usb_has "${TRCC_USB_IDS[@]}")"; then
+        ok "Thermalright display found: $found"
+        default=y
+    else
+        step "no Thermalright display is plugged in"
+        if [ "$ASSUME_YES" = "1" ]; then
+            ok "--yes: not installing software for hardware that is not here"
+            skipped
+            return 0
+        fi
+    fi
+    step "installs thermalright-trcc (AUR) with NVIDIA, Wayland and HID support"
+    step "and starts it at login, minimised"
+    confirm "Install the Thermalright LCD software?" "$default" || { skipped; return 0; }
+    if ! have yay; then
+        warn "yay is not installed - thermalright-trcc comes from the AUR"
+        return 1
+    fi
+    ensure_sudo || return 1
+
+    local -a yflags=(-S --needed)
+    if [ "$ASSUME_YES" = "1" ]; then
+        yflags+=(--noconfirm --answerdiff None --answerclean All)
+    fi
+    # python-nvidia-ml-py: GPU temperature and load on the display (RTX).
+    # python-dbus and python-gobject: the Wayland session. python-hidapi: the
+    # HID transport for the 0416:5302 family.
+    run yay "${yflags[@]}" -- thermalright-trcc python-nvidia-ml-py \
+            python-dbus python-gobject python-hidapi \
+        || { err "could not install thermalright-trcc"; return 1; }
+
+    # The rules only apply to devices that appear AFTER they are loaded;
+    # trigger replays the add event for the display that is already there.
+    if ! in_container && have udevadm; then
+        run sudo udevadm control --reload-rules || warn "udevadm --reload-rules failed"
+        run sudo udevadm trigger --subsystem-match=usb --subsystem-match=hidraw \
+            || warn "udevadm trigger failed - replug the cooler's USB cable"
+    fi
+
+    local desktop=/usr/share/applications/trcc-linux.desktop
+    if [ -f "$desktop" ] || [ "$DRY_RUN" = "1" ]; then
+        autostart_entry trcc-linux "$(awk -F= '/^Exec=/ {sub(/^Exec=/, ""); print; exit}' "$desktop" 2>/dev/null || echo trcc)" \
+            "Thermalright LCD Control Center" || warn "could not create the autostart entry"
+    fi
+    ok_did "TRCC installed"
+    hint "check the device with: trcc report"
+    hint "pick a theme in the TRCC window; it keeps driving the screen from the tray"
+    completed
+}
+
+# ARGB through OpenRGB.
+#
+# Gigabyte boards drive their RGB and ARGB headers from an ITE controller on
+# USB (048d:5702 "RGB Fusion 2"; 048d:8297 and 048d:5711 on other boards),
+# and OpenRGB speaks its protocol. Fans and strips on the board's ARGB
+# headers are therefore OpenRGB's; a cooler with its own Thermalright LED
+# controller (0416:8001) belongs to TRCC instead.
+#
+# RGB memory sits on the SMBus and needs i2c-dev, which is not loaded by
+# default; i2c-piix4 (AMD) or i2c-i801 (Intel) load themselves. The package
+# ships 60-openrgb.rules, which hands the USB, HID and i2c devices to the
+# logged-in user.
+OPENRGB_USB_IDS=(048d:5702 048d:5711 048d:8297)
+install_openrgb() {
+    log "ARGB lighting (OpenRGB)"
+    local found default=n
+    if found="$(usb_has "${OPENRGB_USB_IDS[@]}")"; then
+        ok "Gigabyte RGB Fusion 2 controller found: $found"
+        default=y
+    else
+        step "no known RGB controller found on USB"
+        if [ "$ASSUME_YES" = "1" ]; then
+            ok "--yes: not installing software for hardware that is not here"
+            skipped
+            return 0
+        fi
+    fi
+    step "installs openrgb, loads i2c-dev at boot (RGB memory) and starts"
+    step "OpenRGB at login with the profile named 'default'"
+    confirm "Install OpenRGB?" "$default" || { skipped; return 0; }
+    ensure_sudo || return 1
+
+    local -a nc=()
+    mapfile -t nc < <(noconfirm_args)
+    run sudo pacman -S --needed "${nc[@]}" -- openrgb i2c-tools \
+        || { err "could not install openrgb"; return 1; }
+
+    local modconf=/etc/modules-load.d/i2c-dev.conf
+    if [ -f "$modconf" ] && grep -qx 'i2c-dev' "$modconf"; then
+        ok "i2c-dev is already loaded at boot"
+    else
+        run sudo sh -c "printf 'i2c-dev\n' > $modconf" \
+            || warn "could not write $modconf - RGB memory will not be found"
+    fi
+    if ! in_container; then
+        run sudo modprobe i2c-dev || warn "could not load i2c-dev now - it loads at the next boot"
+        if have udevadm; then
+            run sudo udevadm control --reload-rules || true
+            run sudo udevadm trigger || true
+        fi
+    fi
+
+    # --profile names a profile that the user saves once, from the GUI. Until
+    # then OpenRGB starts, finds the profile missing, and changes nothing.
+    autostart_entry openrgb "openrgb --startminimized --profile default" \
+        "Apply the saved ARGB profile" || warn "could not create the autostart entry"
+    ok_did "OpenRGB installed"
+    hint "open OpenRGB, set the colours, then Profiles -> Save as 'default'"
+    hint "check what it sees with: openrgb --list-devices"
     completed
 }
 
@@ -2118,6 +2294,8 @@ main() {
     do_step "yay"           install_yay
     do_step "packages"      install_yay_packages
     do_step "cachyos kernel" install_cachyos_kernel
+    do_step "thermalright lcd" install_thermalright_lcd
+    do_step "rgb"           install_openrgb
     do_step "zsh"           install_zsh
     do_step "ssh key"       install_sshkey
     do_step "libvirt"       install_libvirt_configuration
