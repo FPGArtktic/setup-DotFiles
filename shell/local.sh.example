@@ -1,0 +1,21 @@
+# shellcheck shell=sh
+# ===========================================================================
+#  ~/.config/shell/local.sh - settings for THIS machine only
+#
+#  Sourced last by bashrc and zshrc, after everything setup-dotFiles.sh
+#  installs. setup-dotFiles.sh copies this example only when local.sh does
+#  not exist yet, and never overwrites it. Keep it out of version control.
+#
+#  path_prepend and path_append come from env.sh.
+# ===========================================================================
+
+# --- example: Intel Quartus Prime Lite + Questa FSE --------------------------
+# QROOT="$HOME/altera_lite/25.1std"
+# export QUARTUS_ROOTDIR="$QROOT/quartus"
+# export QSYS_ROOTDIR="$QUARTUS_ROOTDIR/sopc_builder/bin"
+# path_append "$QUARTUS_ROOTDIR/bin"
+# path_append "$QROOT/questa_fse/bin"
+# case ";${SALT_LICENSE_SERVER:-};" in
+#   *";$HOME/.altera.quartus/questa_lic.dat;"*) ;;
+#   *) export SALT_LICENSE_SERVER="${SALT_LICENSE_SERVER:+$SALT_LICENSE_SERVER;}$HOME/.altera.quartus/questa_lic.dat" ;;
+# esac

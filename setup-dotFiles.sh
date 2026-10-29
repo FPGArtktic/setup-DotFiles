@@ -73,8 +73,13 @@ fi
 BASHRC_SRC="$SCRIPT_DIR/bashrc"
 ZSHRC_SRC="$SCRIPT_DIR/zshrc"
 BASH_PROFILE_SRC="$SCRIPT_DIR/bash_profile"
-FZF_SRC="$SCRIPT_DIR/fzf.bash"
 TMUX_SRC="$SCRIPT_DIR/tmux.conf"
+SHELL_SRC="$SCRIPT_DIR/shell"
+BLERC_SRC="$SCRIPT_DIR/blerc"
+INPUTRC_SRC="$SCRIPT_DIR/inputrc"
+STARSHIP_SRC="$SCRIPT_DIR/starship.toml"
+FASTFETCH_SRC="$SCRIPT_DIR/fastfetch/config.jsonc"
+KONSOLE_SRC="$SCRIPT_DIR/konsole"
 NVIM_SRC="$SCRIPT_DIR/nvim"
 PKG_LIST="$SCRIPT_DIR/yay-apps.txt"
 
@@ -95,6 +100,17 @@ XDG_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
 # install, and updating the dotfiles is a plain file copy.
 MANAGED_DIR="$XDG_CONFIG_DIR/setup-dotfiles"
 
+# env.sh, aliases.sh, functions.sh and fzf.sh, shared by bash and zsh. Both
+# rc files read them from here; local.sh next to them is the user's own and
+# is never overwritten.
+SHELL_DEST="$XDG_CONFIG_DIR/shell"
+
+# ble.sh, the readline replacement bashrc loads. Unpacked from the upstream
+# nightly tarball: there is no repository package, and the AUR one builds
+# from git for minutes to produce the same files.
+BLESH_DIR="$HOME/.local/share/blesh"
+BLESH_URL="https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz"
+
 # Neovim reads exactly one directory, and it is not negotiable.
 NVIM_DEST="$XDG_CONFIG_DIR/nvim"
 
@@ -107,12 +123,15 @@ MTSH_REPO="https://github.com/FPGArtktic/ohmyzsh-mtsh-theme.git"
 TPM_DIR="$HOME/.tmux/plugins/tpm"
 TPM_REPO="https://github.com/tmux-plugins/tpm"
 
-# The three zsh plugins that are not part of Oh My Zsh itself, in the order
-# zshrc expects to find them. "name url" per entry, split on the first space.
+# The zsh plugins that are not part of Oh My Zsh itself, in the order zshrc
+# loads them. "name url" per entry, split on the first space. zshrc skips any
+# that is missing, so a failed clone costs one feature, not the shell.
+# zsh-completions is not here: it comes from the package of the same name.
 declare -a OMZ_PLUGIN_REPOS=(
-    "zsh-autosuggestions https://github.com/zsh-users/zsh-autosuggestions.git"
-    "zsh-syntax-highlighting https://github.com/zsh-users/zsh-syntax-highlighting.git"
     "fzf-tab https://github.com/Aloxaf/fzf-tab.git"
+    "zsh-autosuggestions https://github.com/zsh-users/zsh-autosuggestions.git"
+    "fast-syntax-highlighting https://github.com/zdharma-continuum/fast-syntax-highlighting.git"
+    "zsh-history-substring-search https://github.com/zsh-users/zsh-history-substring-search.git"
 )
 
 # --- defaults ----------------------------------------------------------------
@@ -794,8 +813,9 @@ preflight() {
     [ "$missing" -eq 0 ] || hint "the package step installs them; re-run afterwards"
 
     local f missing=0 total=0
-    for f in "$BASHRC_SRC" "$ZSHRC_SRC" "$BASH_PROFILE_SRC" "$FZF_SRC" \
-             "$TMUX_SRC" "$PKG_LIST"; do
+    for f in "$BASHRC_SRC" "$ZSHRC_SRC" "$BASH_PROFILE_SRC" "$TMUX_SRC" \
+             "$PKG_LIST" "$SHELL_SRC/env.sh" "$BLERC_SRC" "$INPUTRC_SRC" \
+             "$STARSHIP_SRC" "$FASTFETCH_SRC"; do
         total=$((total + 1))
         if [ ! -f "$f" ]; then
             warn "missing data file: $f"
@@ -864,6 +884,7 @@ install_bashrc() {
     log "Bash configuration"
     step "installs bashrc as $(tilde "$MANAGED_DIR")/bashrc"
     step "and adds one guarded source line to $(tilde "$HOME/.bashrc")"
+    step "plus shell/*.sh -> $(tilde "$SHELL_DEST")/, blerc -> ~/.blerc, inputrc -> ~/.inputrc"
     confirm "Install the bash configuration?" y || { skipped; return 0; }
     need_file "$BASHRC_SRC" || return 1
 
@@ -881,16 +902,50 @@ install_bashrc() {
     # copy and the new file both being read, so it goes first.
     run rc_block_drop "$HOME/.bashrc" dotfiles \
         || warn "could not remove the old inline bashrc block from $HOME/.bashrc"
+    # And the fzf block of the versions that installed ~/.fzf.bash: the fzf
+    # setup lives in ~/.config/shell/fzf.sh now.
+    run rc_block_drop "$HOME/.bashrc" fzf \
+        || warn "could not remove the old fzf block from $HOME/.bashrc"
+
+    install_shell_common || return 1
+    install_file "$BLERC_SRC" "$HOME/.blerc" || { err "could not install ~/.blerc"; return 1; }
+    install_file "$INPUTRC_SRC" "$HOME/.inputrc" || { err "could not install ~/.inputrc"; return 1; }
 
     if ! run rc_block "$HOME/.bashrc" bashrc "$(source_line "$MANAGED_DIR/bashrc")"; then
         err "could not update $HOME/.bashrc"
         return 1
     fi
     ok_did "bash configuration installed"
-    hint "your own additions belong in ~/.bashrc.local - it is sourced last"
-    hint "and is never written to by this script"
-    hint "run 'source ~/.bashrc' or open a new terminal to pick it up"
+    hint "your own additions belong in ~/.config/shell/local.sh (both shells)"
+    hint "or ~/.bashrc.local (bash only) - sourced last, never written to"
+    hint "ble.sh, starship and fastfetch come with the prompt step"
+    hint "run 'exec bash' or open a new terminal to pick it up"
     completed
+}
+
+# The files bash and zsh share. Called by both shell steps, so declining one
+# of them still leaves the other complete; the second call finds everything
+# up to date and copies nothing.
+#
+# They are copies of this repository, so they go in without backups, like
+# the managed rc files. local.sh is the exception in the other direction: it
+# is the user's, and the example is copied only when there is none yet.
+install_shell_common() {
+    local f name
+    need_file "$SHELL_SRC/env.sh" || return 1
+    run mkdir -p "$SHELL_DEST" || { err "could not create $SHELL_DEST"; return 1; }
+    for f in "$SHELL_SRC"/*.sh; do
+        name="$(basename "$f")"
+        copy_if_changed "$f" "$SHELL_DEST/$name" || {
+            err "could not install $SHELL_DEST/$name"
+            return 1
+        }
+    done
+    if [ ! -e "$SHELL_DEST/local.sh" ] && [ -f "$SHELL_SRC/local.sh.example" ]; then
+        run cp "$SHELL_SRC/local.sh.example" "$SHELL_DEST/local.sh" \
+            || warn "could not create $SHELL_DEST/local.sh"
+    fi
+    return 0
 }
 
 # 3. The bash LOGIN shell. ~/.bashrc alone is not enough: a console login,
@@ -1066,8 +1121,8 @@ install_yay_packages() {
 install_zsh() {
     log "Zsh configuration"
     step "installs zshrc as $(tilde "$MANAGED_DIR")/zshrc, sourced from ~/.zshrc"
-    step "installs Oh My Zsh, zsh-autosuggestions, zsh-syntax-highlighting,"
-    step "fzf-tab and the mtsh theme into $(tilde "$OMZ_DIR")"
+    step "installs Oh My Zsh, fzf-tab, zsh-autosuggestions, fast-syntax-highlighting,"
+    step "zsh-history-substring-search and the mtsh theme into $(tilde "$OMZ_DIR")"
     confirm "Install the zsh configuration?" y || { skipped; return 0; }
     need_file "$ZSHRC_SRC" || return 1
 
@@ -1085,6 +1140,7 @@ install_zsh() {
         err "could not install $MANAGED_DIR/zshrc"
         return 1
     }
+    install_shell_common || return 1
 
     # ZDOTDIR, when set, is where zsh looks for .zshrc; writing to ~/.zshrc
     # would then configure a file zsh never reads.
@@ -1100,8 +1156,9 @@ install_zsh() {
         return 1
     fi
     ok_did "zsh configuration installed"
-    hint "your own additions belong in ~/.zshrc.local - it is sourced last"
-    hint "and is never written to by this script"
+    hint "your own additions belong in ~/.config/shell/local.sh (both shells)"
+    hint "or ~/.zshrc.local (zsh only) - sourced last, never written to"
+    hint "switch the prompt with: prompt-use starship | prompt-use mtsh"
 
     # --- Oh My Zsh and its plugins -------------------------------------------
     if ! have git; then
@@ -1167,7 +1224,7 @@ install_zsh() {
         hint "check the network and re-run this step; the login shell is left alone"
         return 1
     fi
-    ok "Oh My Zsh, the three plugins and the mtsh theme are in place"
+    ok "Oh My Zsh, the ${#OMZ_PLUGIN_REPOS[@]} plugins and the mtsh theme are in place"
     hint "the mtsh theme needs a powerline font selected in your terminal emulator"
 
     # --- the login shell, which is the one thing that can lock somebody out --
@@ -1438,51 +1495,102 @@ install_libvirt_configuration() {
     completed
 }
 
-# 10. fzf.
-install_fzf() {
-    log "fzf"
-    confirm "Install fzf and its shell integration?" y || { skipped; return 0; }
-    need_file "$FZF_SRC" || return 1
+# The prompt and the tools around it: starship, fastfetch, ble.sh, and the
+# pkgfile database zsh's command-not-found plugin answers from.
+#
+# The programs themselves come from the package step (starship, fastfetch,
+# fzf, zoxide, eza, bat, fd, git-delta, pkgfile); this step installs their
+# configuration, plus ble.sh, which has no repository package.
+install_prompt_tools() {
+    log "Prompt, greeting and line editor"
+    step "starship.toml -> $(tilde "$XDG_CONFIG_DIR")/starship.toml"
+    step "fastfetch/config.jsonc -> $(tilde "$XDG_CONFIG_DIR")/fastfetch/config.jsonc"
+    step "ble.sh nightly -> $(tilde "$BLESH_DIR")"
+    confirm "Install the prompt, the greeting and ble.sh?" y || { skipped; return 0; }
+    need_file "$STARSHIP_SRC" || return 1
+    need_file "$FASTFETCH_SRC" || return 1
 
-    if have fzf; then
-        # fzf is a normal [extra] package; when the package list already
-        # installed it there is nothing to clone.
-        ok "fzf is already installed - only refreshing the shell integration"
-    elif [ -d "$HOME/.fzf" ]; then
-        # The old unconditional clone failed here on every second run.
-        ok "$HOME/.fzf already exists - updating it instead of cloning"
-        run git -C "$HOME/.fzf" pull --ff-only \
-            || warn "could not update $HOME/.fzf (local changes?), using it as is"
-        # --no-update-rc: this repository ships its own fzf.bash, and letting
-        # the installer append to ~/.bashrc as well made that file grow on
-        # every run.
-        run "$HOME/.fzf/install" --key-bindings --completion --no-update-rc \
-            || { err "the fzf installer failed"; return 1; }
+    install_file "$STARSHIP_SRC" "$XDG_CONFIG_DIR/starship.toml" \
+        || { err "could not install starship.toml"; return 1; }
+    run mkdir -p "$XDG_CONFIG_DIR/fastfetch" || return 1
+    install_file "$FASTFETCH_SRC" "$XDG_CONFIG_DIR/fastfetch/config.jsonc" \
+        || { err "could not install the fastfetch configuration"; return 1; }
+
+    local t
+    for t in starship fastfetch fzf zoxide eza bat fd delta; do
+        have "$t" || warn "$t is not installed yet - it comes from $PKG_LIST"
+    done
+
+    # ble.sh is replaced wholesale rather than updated in place: ble-update
+    # needs a git checkout, and the tarball is a few hundred kilobytes.
+    if [ -r "$BLESH_DIR/ble.sh" ]; then
+        ok "ble.sh is already installed - update it from bash with: ble-update"
+    elif ! have curl || ! have tar; then
+        warn "curl or tar is missing - skipping ble.sh; bash works without it"
     else
-        run git clone --depth 1 https://github.com/junegunn/fzf.git "$HOME/.fzf" \
-            || { err "could not clone fzf"; return 1; }
-        run "$HOME/.fzf/install" --key-bindings --completion --no-update-rc \
-            || { err "the fzf installer failed"; return 1; }
+        step "downloading ble.sh into $(tilde "$BLESH_DIR")"
+        run blesh_bootstrap || { err "could not install ble.sh"; return 1; }
     fi
 
-    install_file "$FZF_SRC" "$HOME/.fzf.bash" || return 1
-
-    # Installing ~/.fzf.bash is pointless unless something sources it. The
-    # bashrc in this repository does that itself now, so the block earlier
-    # versions added to ~/.bashrc would only source the same file twice - it
-    # is removed when the managed bashrc is in place, and still written when
-    # it is not, so declining the bash step does not silently disable fzf.
-    if [ -f "$MANAGED_DIR/bashrc" ]; then
-        run rc_block_drop "$HOME/.bashrc" fzf \
-            || warn "could not remove the old fzf block from $HOME/.bashrc"
-        dbg "the managed bashrc sources ~/.fzf.bash - no separate block needed"
-    else
-        run rc_block "$HOME/.bashrc" fzf "$(source_line "$HOME/.fzf.bash")" \
-            || { err "could not add the fzf hook to ~/.bashrc"; return 1; }
+    if have pkgfile; then
+        ensure_sudo || return 1
+        run sudo pkgfile --update \
+            || warn "pkgfile --update failed - command-not-found will stay quiet until it runs"
     fi
-    # zsh does not read ~/.fzf.bash at all - it is bash syntax. The zshrc in
-    # this repository sources fzf's own zsh integration instead.
-    ok_did "fzf configuration installed"
+    ok_did "prompt tools configured"
+    hint "zsh uses the mtsh theme by default; 'prompt-use starship' switches"
+    completed
+}
+
+# Download and unpack the ble.sh tarball in a temporary directory, then move
+# it into place. Subshell for the EXIT trap, as in yay_bootstrap.
+blesh_bootstrap() (
+    local tmpdir
+    tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/setup-dotfiles-blesh.XXXXXX")" || return 1
+    trap 'rm -rf "$tmpdir"' EXIT
+    curl -fsSL "$BLESH_URL" | tar -xJ -C "$tmpdir" || return 1
+    [ -r "$tmpdir/ble-nightly/ble.sh" ] || return 1
+    mkdir -p "$BLESH_DIR" || return 1
+    cp -r "$tmpdir/ble-nightly/." "$BLESH_DIR/" || return 1
+    return 0
+)
+
+# Konsole: a profile with the Nerd Font, the Catppuccin Mocha colours, and
+# that profile as the default.
+#
+# The Font= line is in the Qt 6 format (16 fields, weight 400). Konsole on
+# Qt 5 reads only 10 fields with weight on a 0-99 scale and renders a Qt 6
+# line with the wrong weight and metrics; every current Arch Konsole is Qt 6.
+# "Nerd Font Mono", not "Nerd Font": the non-Mono icons are wider than one
+# cell and push the columns out of line.
+install_konsole() {
+    log "Konsole profile"
+    if ! have konsole; then
+        ok "Konsole is not installed - nothing to configure"
+        skipped
+        return 0
+    fi
+    local dest="$HOME/.local/share/konsole"
+    step "konsole/Mok.profile and CatppuccinMocha.colorscheme -> $(tilde "$dest")/"
+    step "and Mok.profile as the default profile in konsolerc"
+    confirm "Install the Konsole profile?" y || { skipped; return 0; }
+    need_file "$KONSOLE_SRC/Mok.profile" || return 1
+    need_file "$KONSOLE_SRC/CatppuccinMocha.colorscheme" || return 1
+
+    run mkdir -p "$dest" || return 1
+    install_file "$KONSOLE_SRC/Mok.profile" "$dest/Mok.profile" || return 1
+    install_file "$KONSOLE_SRC/CatppuccinMocha.colorscheme" "$dest/CatppuccinMocha.colorscheme" || return 1
+
+    local kw=""
+    if have kwriteconfig6; then kw=kwriteconfig6; elif have kwriteconfig5; then kw=kwriteconfig5; fi
+    if [ -n "$kw" ]; then
+        run "$kw" --file konsolerc --group "Desktop Entry" --key DefaultProfile Mok.profile \
+            || warn "could not set the default profile - pick Mok in Settings -> Manage Profiles"
+    else
+        warn "no kwriteconfig - pick Mok in Konsole: Settings -> Manage Profiles"
+    fi
+    ok_did "Konsole profile installed"
+    hint "Konsole reads profiles at start - close every Konsole window first"
     completed
 }
 
@@ -1881,7 +1989,8 @@ main() {
     do_step "zsh"           install_zsh
     do_step "ssh key"       install_sshkey
     do_step "libvirt"       install_libvirt_configuration
-    do_step "fzf"           install_fzf
+    do_step "prompt"        install_prompt_tools
+    do_step "konsole"       install_konsole
     do_step "ram disk"      install_ram_disk
     do_step "tmux"          install_tmux
     do_step "neovim"        install_neovim

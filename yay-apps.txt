@@ -201,6 +201,11 @@ ncdu
 # the old FUSE implementation, deprecated upstream in favour of the in-kernel
 # exFAT driver that exfatprogs is built for.
 exfatprogs
+# btrfs snapshots: snapper, not timeshift. grub-btrfs lists the snapper
+# snapshots in the boot menu, and snap-pac takes a pre/post pair around every
+# pacman transaction, so a bad upgrade is one reboot away from undone.
+snapper
+snap-pac
 grub-btrfs
 gnome-disk-utility
 
@@ -261,6 +266,16 @@ eza
 git-delta
 btop
 fzf
+# starship: the prompt (starship.toml); bash always, zsh after `prompt-use
+# starship`. zoxide: `z <fragment>` and `zi`, wired into both rc files.
+starship
+zoxide
+# pkgfile: the database Oh My Zsh's command-not-found plugin asks which
+# package provides a missing command. The prompt step runs `pkgfile --update`.
+pkgfile
+# The Nerd Font the Konsole profile, starship and eza --icons expect. The
+# Mono variant: the others draw icons wider than a terminal cell.
+ttf-jetbrains-mono-nerd
 jq
 tree
 lynx
