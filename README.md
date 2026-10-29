@@ -20,7 +20,7 @@ A new machine, and the same evening spent again: install the packages, paste the
 generate an SSH key, join the `libvirt` group, remember what else there was. This repository is that
 evening written down once.
 
-`setup-dotFiles.sh` walks through thirteen steps in a fixed order and asks a Y/n question before
+`setup-dotFiles.sh` walks through twenty-one steps in a fixed order and asks a Y/n question before
 each one, so a run can be steered a single answer at a time. Every step is idempotent by design:
 running it twice leaves the machine exactly as running it once did. The block it adds to
 `~/.bashrc` is delimited and replaced rather than appended; an SSH key that already exists is never
@@ -63,24 +63,10 @@ cd setup-DotFiles
 
 `-b arch` is not optional. The default branch is the apt one.
 
-The script finds `bashrc`, `fzf.bash`, `tmux.conf` and `yay-apps.txt` next to itself, not in the
-current directory, so `~/src/setup-DotFiles/setup-dotFiles.sh` works from anywhere. If you would
-rather not clone, those four files and the script are all it needs, and they can be fetched
-directly - note `raw.githubusercontent.com`, not `github.com`, which serves an HTML page rather
-than the file:
-
-```sh
-mkdir setup-dotFiles && cd setup-dotFiles
-base=https://raw.githubusercontent.com/FPGArtktic/setup-DotFiles/arch
-for f in setup-dotFiles.sh bashrc fzf.bash tmux.conf yay-apps.txt; do
-    curl -fsSLO "$base/$f"
-done
-chmod +x setup-dotFiles.sh
-```
-
-The `chmod` matters: downloaded files are not executable. This gets you the installer and nothing
-else - `zshrc`, `bash_profile` and the Neovim configuration are not in that list, so clone if you
-want them (section 7).
+The script finds its data files (`bashrc`, `zshrc`, `shell/`, `audio/`, `yay-apps.txt` and the
+rest, see section 11) next to itself, not in the current directory, so
+`~/src/setup-DotFiles/setup-dotFiles.sh` works from anywhere. It needs the whole checkout: there
+are too many files now to fetch them one by one, so clone.
 
 ## 5 Invoking setup-dotFiles.sh
 
@@ -88,6 +74,8 @@ want them (section 7).
   --dry-run           print what would be done, change nothing
   -v, --verbose       show each command and each skipped step
   -y, --yes           answer yes to every question (implies non-interactive)
+  --chsh              allow the zsh step to change your login shell
+  --no-chsh           never offer to change your login shell
   --git-name NAME     global git user.name to configure
   --git-email ADDR    global git user.email to configure
   -V, --version       print the version and exit
@@ -131,106 +119,149 @@ skipped and what failed.
 
 ## 6 What the script does
 
-In this order. Each is a question you can answer `n` to.
+The steps run in this order, each behind its own Y/n question. `./setup-dotFiles.sh --help` prints
+the same list.
 
-**1. system update.** `pacman -Syu`, then `base-devel` and `git` in a transaction of their own -
-they are what `makepkg` needs later, and a cosmetic extra that no longer exists in the repositories
-must not be able to take the toolchain down with it. `fastfetch` is attempted last and is not
-fatal.
+**1. system update.** `pacman -Syu`, then `base-devel` and `git` in a transaction of their own, so
+that a missing cosmetic package cannot take the toolchain down with it.
 
-**2. bashrc.** Writes `bashrc` into `~/.bashrc` between `# >>> setup-dotFiles: dotfiles >>>` and
-its closing marker, removing any earlier block of the same name first. The first time it touches
-the file it keeps one pristine copy at `~/.bashrc.orig.setup-dotFiles`.
+**2. bashrc.** Installs `bashrc` as `~/.config/setup-dotfiles/bashrc` and adds one guarded
+`source` line to `~/.bashrc` between `# >>> setup-dotFiles: bashrc >>>` markers. It also
+installs the files bash and zsh share (`shell/*.sh` into `~/.config/shell/`), `blerc` as `~/.blerc`
+and `inputrc` as `~/.inputrc`. The first time it touches `~/.bashrc` it keeps one pristine copy at
+`~/.bashrc.orig.setup-dotFiles`. Blocks left by older versions (`dotfiles`, `fzf`) are removed.
 
-**3. yay.** Skipped when `yay` is already on `$PATH`. Otherwise it clones `yay-bin` from the AUR
-into a temporary directory, builds it with `makepkg -si`, and removes the directory afterwards -
-nothing is left in your checkout.
+**3. bash profile.** The same for `~/.bash_profile`, so that a login shell (`ssh host`, a console
+login) reads `~/.bashrc` as well.
 
-**4. packages.** Reads `yay-apps.txt` and installs it as one `yay -S --needed` transaction. If that
+**4. makepkg.** Installs `makepkg-native.conf` as `/etc/makepkg.conf.d/zz-native.conf`. makepkg
+reads that directory after `/etc/makepkg.conf`, so the stock file is never edited and a pacman
+upgrade never leaves a `.pacnew` behind. The drop-in edits the stock values instead of restating
+them:
+
+| Setting | Value | Why |
+|---|---|---|
+| `CFLAGS`, `CXXFLAGS` | `-march=x86-64 -mtune=generic` becomes `-march=native` | code for this CPU; `-O2` stays |
+| `RUSTFLAGS` | `+ -C target-cpu=native -C opt-level=3` | the same for Rust |
+| `MAKEFLAGS` | `-j$(nproc)` | every core; the stock value is `-j1` |
+| `BUILDDIR` | `/tmp/makepkg` | builds on tmpfs, no SSD writes |
+| `BUILDENV` | `ccache` | a rebuild reuses unchanged objects (20 GB cache) |
+| `OPTIONS` | `!debug` | no `-debug` split packages; `lto` stays |
+| `COMPRESSZST` | `zstd -c -T0 -1 -` | fast package compression on all cores |
+
+Packages built after this run only on this CPU generation. The step warns when SMT is switched
+off in the firmware, which halves the number of build jobs.
+
+**5. yay.** Skipped when `yay` is already on `$PATH`. Otherwise it clones `yay-bin` from the AUR
+into a temporary directory, builds it with `makepkg -si`, and removes the directory afterwards.
+
+**6. packages.** Reads `yay-apps.txt` and installs it as one `yay -S --needed` transaction. If that
 aborts, it retries one package at a time so the run still installs what it can, and names the ones
-that did not resolve. This is the long step; see section 10 before you accept it.
+that did not resolve.
 
-**5. ssh key.** An ed25519 key at `~/.ssh/id_ed25519`. An existing key is reported and left
-untouched - never overwritten, never prompted about. A new key is followed by the URL for adding it
-to GitHub and the public key itself.
+**7. cachyos kernel.** Builds `linux-cachyos` and `linux-cachyos-headers` from the AUR with
+`_processor_opt=native` (the PKGBUILD's own switch for `X86_NATIVE_CPU`; the kernel ignores
+makepkg's CFLAGS), in `~/.cache/makepkg-build` because a kernel does not fit in the tmpfs. Then it
+sets `GRUB_TOP_LEVEL` so that GRUB boots it by default, and runs `grub-mkconfig`. The stock `linux`
+stays installed as the fallback entry. Interactively yay asks before importing the packagers' PGP
+keys; read that question once. Expect 20 minutes to an hour.
 
-**7. libvirt.** Membership of the `libvirt` group, `libvirtd.socket`, and the default guest
+**8. thermalright lcd.** Thermalright LCD coolers (Frozen Warframe, Trofeo Vision, Assassin Spirit
+and Elite Vision, and others) show nothing until a program feeds the screen. This step installs
+[TRCC Linux](https://github.com/Lexonight1/thermalright-trcc-linux) (`thermalright-trcc` from the
+AUR) with NVIDIA, Wayland and HID support, reloads its udev rules, and starts it at login. It
+defaults to yes when one of the USB ids TRCC supports is plugged in (`0416:5302`, `0416:5406`,
+`0402:3922`, …) and to no otherwise. Under `--yes` it is skipped when there is no such device.
+
+**9. rgb.** [OpenRGB](https://openrgb.org) for the motherboard's RGB and ARGB headers, which on
+Gigabyte boards hang off an ITE "RGB Fusion 2" controller on USB (`048d:5702`). It loads `i2c-dev`
+at boot for RGB memory and starts OpenRGB at login with the profile named `default`. Save that
+profile once from the GUI; until then OpenRGB starts and changes nothing. Same detection rule as
+step 8.
+
+**10. audio.** A PipeWire/WirePlumber profile for USB DACs, the `autoeq` switcher with Denon
+AH-D5200/D7200/D9200 impulses, and `m20-dropwatch`. [docs/AUDIO.md](docs/AUDIO.md) explains it.
+
+**11. zsh.** `zshrc` as `~/.config/setup-dotfiles/zshrc`, sourced from `~/.zshrc`; Oh My Zsh,
+`fzf-tab`, `zsh-autosuggestions`, `fast-syntax-highlighting`, `zsh-history-substring-search` and
+the `mtsh` theme. It offers to make zsh the login shell, but never under `--yes` alone: pass
+`--chsh` for that.
+
+**12. ssh key.** An ed25519 key at `~/.ssh/id_ed25519`. An existing key is reported and left
+untouched.
+
+**13. libvirt.** Membership of the `libvirt` group, `libvirtd.socket`, and the default guest
 network. The group is the whole of the access control: `50-libvirt.rules`, shipped by the libvirt
-package, grants `org.libvirt.unix.manage` to that group and to nothing else - no `sudo`, no
-editing `libvirtd.conf`. The socket is enabled rather than the service, so `libvirtd` starts on
-the first connection instead of at boot; if the modular daemons (`virtqemud` and friends) are
-already active the step says so and leaves them alone. The `default` network ships inactive with
-autostart off, and a guest created before it is up has no network at all, which reads as a guest
-fault - so the step turns it on and warns when `dnsmasq` is missing. It also reports whether
-`/dev/kvm` is there, because without VT-x/AMD-V every guest silently falls back to software
-emulation and merely feels broken.
+package, grants `org.libvirt.unix.manage` to that group and to nothing else. The `default` network
+ships inactive with autostart off, so the step turns it on, warns when `dnsmasq` is missing, and
+reports whether `/dev/kvm` is there.
 
-VirtualBox was replaced by this. It needed an out-of-tree module rebuilt by DKMS against every
-installed kernel - and this list keeps four of them - while KVM is part of the kernel itself.
+**14. prompt.** `starship.toml`, the fastfetch greeting (`fastfetch/config.jsonc`), ble.sh (the
+nightly tarball, into `~/.local/share/blesh`), and `pkgfile --update` for zsh's command-not-found
+plugin.
 
-**8. fzf.** Installs `fzf.bash` as `~/.fzf.bash` and adds a second managed block to `~/.bashrc`
-that sources it. `fzf` itself comes from `yay-apps.txt`; the step only falls back to cloning
-`junegunn/fzf` into `~/.fzf` when the package is not installed, and the upstream installer is run
-with `--no-update-rc` so it cannot append to `~/.bashrc` behind the block's back.
+**15. konsole.** A Konsole profile, `Mok`, with JetBrainsMono Nerd Font Mono and the Catppuccin
+Mocha colours, set as the default. Skipped when Konsole is not installed.
 
-**9. ram disk.** `~/RAMDISC` as a symlink to `/dev/shm` - tmpfs, so it is fast and cleared on
-reboot. A link that already points there is left alone; a real file or directory in the way is
-refused rather than replaced.
+**16. ram disk.** `~/RAMDISC` as a symlink to `/dev/shm`.
 
-**10. tmux.** Installs `tmux.conf` as `~/.tmux.conf`, keeping a timestamped backup if the existing
-file differs. The config clones tpm and installs its plugins the first time tmux starts.
+**17. tmux.** Installs `tmux.conf` as `~/.tmux.conf`, keeping a timestamped backup if the existing
+file differs, and installs tpm and its plugins.
 
-**11. git rules.** `core.fileMode false`, `user.name` and `user.email`, globally. See section 14
+**18. neovim.** Copies `nvim/` to `~/.config/nvim/`, then downloads the plugins, language servers
+and tree-sitter parsers.
+
+**19. git rules.** `core.fileMode false`, `user.name` and `user.email`, globally. See section 14
 before you accept this one.
 
-**12. tailscale.** Installs the `tailscale` package and enables `tailscaled`. Installing Tailscale
-does not connect the machine; run `sudo tailscale up` afterwards.
+**20. tailscale.** Installs the `tailscale` package and enables `tailscaled`. Run
+`sudo tailscale up` afterwards.
 
-**13. post-install.** A final `yay -Syu` (or `pacman -Syu` when yay is absent) and a trim of the
-package cache with `paccache -rk2`. Orphan removal is deliberately left to you - it is the one
-operation here that can uninstall something you wanted.
+**21. post-install.** A final `yay -Syu` and a trim of the package cache with `paccache -rk2`.
 
-## 7 The shell and editor configuration
+## 7 The shell configuration
 
-`bashrc`, `fzf.bash` and `tmux.conf` are what the steps above install. The rest of the
-configuration ships with the repository but is not wired into the script yet, and has to be copied
-by hand:
+bash and zsh share four files in `~/.config/shell/`, written in syntax both shells accept:
 
-```sh
-cp zshrc        ~/.zshrc
-cp bash_profile ~/.bash_profile
-mkdir -p ~/.config && cp -a nvim ~/.config/
-```
+| File | What it holds |
+|---|---|
+| `env.sh` | `PATH` (`~/.local/bin` first), `EDITOR` (nvim, else vim), `LESS`, `BAT_THEME` |
+| `aliases.sh` | `l ll la lt tree t2` (eza), `b bp` (bat), `docker`/`docker-compose` → podman, `lg`, `lzp`, `du1`, `ports`, `path`, `serial`, `gs gd gl` |
+| `functions.sh` | `mkcd`, `up [N]`, `hlp <cmd>`, `x <archive>` |
+| `fzf.sh` | fzf options and colours, `fcd fo fgr fbr fkill flog` |
 
-What each file is:
+The classic commands keep their meaning: `ls`, `cat` and `grep` are not aliased to eza, bat or
+ripgrep, because `ls -lt` and scripts have to keep working. The new tools get new names.
 
-**`bashrc`** - unlimited, timestamped history shared between terminals; a two-line prompt ending in
-the current git branch; aliases that are only defined when the tool behind them is installed (`eza`,
-`bat`, `btop`, `lazygit`, `podman-tui`); and a `fastfetch` greeting you can silence
-with `DOTFILES_NO_FETCH=1`. Your own additions belong in `~/.bashrc.local`, which is sourced last
-and is never touched by a reinstall.
+There is no docker on this setup, only podman: rootless, daemonless, no group that amounts to root.
+`docker` and `docker-compose` are aliases for `podman` and `podman-compose`, so typed commands and
+old notes keep working.
 
-**`zshrc`** - the same configuration for zsh: Oh My Zsh, the same history behaviour, the same
-aliases, the same fzf options. It uses the `mtsh` theme when that theme is present in
-`$ZSH/custom/themes` and falls back to `robbyrussell` when it is not. `~/.zshrc.local` is the local
-override.
+**bash** (`bashrc`): ble.sh (autosuggestions, syntax highlighting; disable for one session with
+`NO_BLE=1 bash`), starship, fzf key bindings (Ctrl-R, Ctrl-T, Alt-C), zoxide (`z`, `zi`),
+unlimited timestamped history written after every command, and `cp` as `rsync -avh --progress`
+(plain `cp` is `\cp`).
 
-**`bash_profile`** - one job: make a *login* shell - `ssh host`, a text console login, `su -` -
-read `~/.bashrc`, which by definition it otherwise does not. It sources whichever of
-`~/.bash_login` or `~/.profile` bash would have read first, so creating it shadows nothing, and it
-prints nothing, so it is safe for `scp` and `rsync` sessions.
+**zsh** (`zshrc`): Oh My Zsh with `git sudo extract colored-man-pages command-not-found copypath
+copybuffer` and the four plugins above. Tab opens fzf-tab with previews, up and down arrows search
+history by the typed prefix, Ctrl-Space accepts a suggestion, and Esc Esc prepends sudo. The
+prompt is the `mtsh` theme or starship: `prompt-use starship` or `prompt-use mtsh` switches and
+remembers the choice.
 
-**`tmux.conf`** - `C-Space` as the prefix, mouse on, vi-style copy mode, splits that keep the
-current directory, `M-arrow` pane navigation, and a status line showing the branch of whichever
-pane is active. tpm plus sensible/resurrect/continuum are cloned and installed the first time tmux
-starts.
+Both show a fastfetch greeting, except in tmux, VS Code, Claude Code and nested shells.
+`DOTFILES_NO_FETCH=1` silences it.
 
-**`fzf.bash`** - fzf defaults: ripgrep or fd as the file source, `bat` previews, and the `fcd`,
-`fo`, `fgr`, `fbr` and `fkill` helpers.
+**Local settings** go to `~/.config/shell/local.sh` (both shells; created from
+`shell/local.sh.example` and never overwritten) or to `~/.bashrc.local` and `~/.zshrc.local`. All
+of them are sourced last.
 
-**`nvim/`** - a LazyVim configuration, ported from the `podman_base` work container so the editor
-behaves the same on both. It has its own documentation in `nvim/README.md`, including the two
-headless `Lazy! sync` runs needed on first install.
+**`bash_profile`** makes a *login* shell read `~/.bashrc`, and prints nothing, so it is safe for
+`scp` and `rsync`.
+
+**`tmux.conf`**: `C-Space` as the prefix, mouse on, vi-style copy mode, splits that keep the
+current directory, and tpm with sensible, resurrect and continuum.
+
+**`nvim/`**: a LazyVim configuration; see `nvim/README.md`.
 
 ## 8 The test environment
 
@@ -337,7 +368,7 @@ That is not pedantry. `yay` aborts the *whole* transaction on one unresolvable n
 typo costs you every other package in the file - which is exactly how this list once failed.
 
 The list is well over a hundred packages, in two halves. The first is the maintainer's own machine:
-four kernels, the KVM stack, a browser, desktop applications. The second is the set the dotfiles in
+the NVIDIA driver, the KVM stack, a browser, desktop applications, audio. The second is the set the dotfiles in
 this repository actually invoke - `eza`, `bat`, `fzf`, `ripgrep`, the Neovim toolchain, the
 clipboard bridges - and trimming that half is what makes the aliases and the editor quietly stop
 working. Trim the first half to taste; read the comments before trimming the second.
@@ -355,11 +386,17 @@ run.sh                  builds and enters the test container (podman)
 Containerfile           the test image; ARG DOT_BASE_IMAGE/DOT_USER/DOT_UID/DOT_GID/DOT_TZ
 .containerignore        the build context is empty by design
 yay-apps.txt            the package list
-bashrc                  installed as a managed block inside ~/.bashrc
-fzf.bash                installed as ~/.fzf.bash, sourced from that block
+bashrc, zshrc           the shell configuration, sourced from ~/.bashrc and ~/.zshrc
+bash_profile            makes a login shell read ~/.bashrc
+shell/                  env.sh aliases.sh functions.sh fzf.sh local.sh.example
+blerc, inputrc          ble.sh and readline settings
+starship.toml           the prompt
+fastfetch/config.jsonc  the greeting
+konsole/                Mok.profile and CatppuccinMocha.colorscheme
+makepkg-native.conf     the makepkg drop-in
+audio/                  PipeWire and WirePlumber profile, AutoEq impulses, autoeq, m20-dropwatch
+docs/AUDIO.md           why the audio profile looks the way it does
 tmux.conf               installed as ~/.tmux.conf
-zshrc                   zsh counterpart of bashrc; copy it yourself (section 7)
-bash_profile            makes a login shell read ~/.bashrc; copy it yourself
 nvim/                   LazyVim configuration; see nvim/README.md
 img/logo.jpeg           the logo above
 LICENSE                 GPLv3
@@ -368,16 +405,29 @@ LICENSE                 GPLv3
 What a full run leaves on the machine:
 
 ```
-~/.bashrc                        two delimited blocks: `dotfiles` and `fzf`
-~/.bashrc.orig.setup-dotFiles    one pristine copy, taken before the first block
-~/.bashrc.local                  yours; sourced last, never touched by a reinstall
-~/.fzf.bash                      from fzf.bash
-~/.fzf/                          only when fzf was not installed as a package
-~/.tmux.conf                     from tmux.conf
-~/.tmux.conf.bak.YYYYmmdd-HHMMSS a backup, whenever an existing file differed
-~/.ssh/id_ed25519                and .pub
-~/RAMDISC                        symlink to /dev/shm
-~/.gitconfig                     user.name, user.email, core.fileMode false
+~/.bashrc, ~/.zshrc, ~/.bash_profile   one guarded source line each
+~/.config/setup-dotfiles/              bashrc, zshrc, bash_profile
+~/.config/shell/                       env.sh aliases.sh functions.sh fzf.sh, local.sh (yours)
+~/.blerc, ~/.inputrc                   ble.sh and readline
+~/.config/starship.toml                the prompt
+~/.config/fastfetch/config.jsonc       the greeting
+~/.local/share/blesh/                  ble.sh
+~/.local/share/konsole/                Mok.profile, CatppuccinMocha.colorscheme
+~/.config/pipewire/pipewire.conf.d/99-audiophile.conf
+~/.config/wireplumber/wireplumber.conf.d/99-audiophile.conf
+~/.local/share/autoeq/denon/           AutoEq impulses
+~/.local/bin/autoeq, m20-dropwatch
+~/.config/autostart/                   trcc-linux.desktop, openrgb.desktop
+~/.oh-my-zsh/                          with custom/plugins and custom/themes/mtsh.zsh-theme
+~/.tmux.conf, ~/.tmux/plugins/tpm
+~/.config/nvim/
+~/.ssh/id_ed25519                      and .pub
+~/RAMDISC                              symlink to /dev/shm
+~/.gitconfig                           user.name, user.email, core.fileMode false
+/etc/makepkg.conf.d/zz-native.conf     the makepkg drop-in
+/etc/modules-load.d/i2c-dev.conf       i2c-dev at boot, for OpenRGB
+/etc/default/grub                      GRUB_TOP_LEVEL = linux-cachyos (backup next to it)
+*.bak.YYYYmmdd-HHMMSS                  a backup, whenever an existing file differed
 ```
 
 ## 12 Environment
@@ -388,7 +438,9 @@ GIT_AUTHOR               global git user.name   (same as --git-name)
 GIT_EMAIL                global git user.email  (same as --git-email)
 NO_COLOR                 suppress coloured output; both scripts honour it
 TMPDIR                   where the yay build and the ~/.bashrc rewrite happen
-DOTFILES_NO_FETCH=1      silence the fastfetch greeting in the installed bashrc
+DOTFILES_NO_FETCH=1      silence the fastfetch greeting in bash and zsh
+NO_BLE=1                 start bash without ble.sh
+AUTOEQ_SINK              the output autoeq puts the EQ in front of
 DOTFILES_IN_CONTAINER=1  set by run.sh inside the container, for anything you run in there
 ```
 
@@ -431,15 +483,17 @@ Known, deliberate, or not worth fixing yet:
   `GIT_AUTHOR`/`GIT_EMAIL` - an identity that is already configured is never overwritten without
   the script saying so first - but a fresh machine plus a reflex `y` will stamp somebody else's
   name on your commits. Pass the flags.
-- `zshrc`, `bash_profile` and `nvim/` ship with the repository, and their own headers describe
-  themselves as installed by `setup-dotFiles.sh`, but no step installs them yet. Section 7 has the
-  three commands that do it by hand.
+- `makepkg-native.conf` makes every AUR build specific to this CPU generation. Do not copy the
+  built packages to another machine.
+- The CachyOS kernel step and the TRCC, OpenRGB and NVIDIA packages are tied to the maintainer's
+  hardware (Ryzen 7800X3D, RTX 50, Gigabyte B650M, a Thermalright LCD cooler). The hardware steps
+  detect their devices, but the package list does not; trim it for other machines.
 - `--yes` generates the SSH key without a passphrase. That is the price of not hanging on
   `ssh-keygen`'s prompt.
-- `yay-apps.txt` carries the maintainer's own machine as well as the dotfiles' dependencies: four
-  kernels, the KVM/libvirt stack, a browser. It is meant to be edited.
-- The container cannot exercise systemd, kernel modules or `/dev/kvm`. A green run in there does
-  not prove the libvirt step works on metal.
+- `yay-apps.txt` carries the maintainer's own machine as well as the dotfiles' dependencies: the
+  NVIDIA driver, the KVM/libvirt stack, a browser. It is meant to be edited.
+- The container cannot exercise systemd, kernel modules, udev, USB devices or `/dev/kvm`. A green
+  run in there does not prove the kernel, libvirt, TRCC or OpenRGB steps work on metal.
 - There are no automated assertions after a test run. The regression test is running
   `setup-dotFiles.sh -y` twice and checking that the second run changes nothing.
 - `run.sh` mounts the checkout read-write, so a container run can write into your working tree.

@@ -87,7 +87,7 @@ RUN pacman -Sy --noconfirm --needed archlinux-keyring \
 #               dropped from the official repositories, and this is what the
 #               bashrc falls back to
 #     ripgrep / fd / bat
-#               optional accelerators that fzf.bash probes for. Without them
+#               optional accelerators that shell/fzf.sh probes for. Without them
 #               the file silently takes its fallback branches and a smoke test
 #               never exercises the paths people actually run.
 #
