@@ -42,20 +42,34 @@ curl
 openssh
 
 # --- kernels and firmware ---------------------------------------------------
-# Four kernels is deliberate on this machine (stock, hardened, LTS, zen).
-# Since VirtualBox went away there is no out-of-tree module left that has to be
-# rebuilt for each of them - KVM is in the kernel itself - so the -headers
-# packages are now only needed if you build DKMS modules of your own. They are
-# kept because compiling anything against a running kernel wants them.
+# Stock and LTS from the repositories. The everyday kernel is linux-cachyos,
+# built from the AUR by its own step (it needs makepkg tuned first and takes a
+# while), so it is not on this list. hardened and zen are gone: with
+# nvidia-open-dkms every installed kernel is one more module build on each
+# driver update.
 linux
 linux-headers
 linux-lts
-linux-hardened
-linux-hardened-headers
-linux-hardened-docs
-linux-zen
+linux-lts-headers
 linux-firmware
+linux-firmware-amd
 linux-firmware-intel
+# clang, llvm and lld: linux-cachyos is built with clang and ThinLTO, and DKMS
+# has to build the NVIDIA module for it with the same compiler.
+clang
+llvm
+lld
+# ccache: makepkg-native.conf turns it on for every build.
+ccache
+
+# --- GPU: NVIDIA (RTX 50 series needs the open kernel modules) ---------------
+# nvidia-open-dkms rather than nvidia-open: the prebuilt module only matches
+# the stock kernel, DKMS builds it for linux-cachyos and linux-lts too.
+nvidia-open-dkms
+nvidia-utils
+lib32-nvidia-utils
+# CDI for podman: `nvidia-ctk cdi generate`, then --device nvidia.com/gpu=all.
+nvidia-container-toolkit
 
 # --- editors and terminal ---------------------------------------------------
 # neovim is THE editor of this configuration: the whole .config/nvim tree

@@ -80,6 +80,7 @@ INPUTRC_SRC="$SCRIPT_DIR/inputrc"
 STARSHIP_SRC="$SCRIPT_DIR/starship.toml"
 FASTFETCH_SRC="$SCRIPT_DIR/fastfetch/config.jsonc"
 KONSOLE_SRC="$SCRIPT_DIR/konsole"
+MAKEPKG_SRC="$SCRIPT_DIR/makepkg-native.conf"
 NVIM_SRC="$SCRIPT_DIR/nvim"
 PKG_LIST="$SCRIPT_DIR/yay-apps.txt"
 
@@ -110,6 +111,16 @@ SHELL_DEST="$XDG_CONFIG_DIR/shell"
 # from git for minutes to produce the same files.
 BLESH_DIR="$HOME/.local/share/blesh"
 BLESH_URL="https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz"
+
+# The makepkg drop-in. "zz-" sorts it after rust.conf, whose RUSTFLAGS it
+# extends; makepkg reads /etc/makepkg.conf.d/*.conf in order after the main
+# file, so the stock /etc/makepkg.conf is never edited and never .pacnew'd.
+MAKEPKG_DEST="/etc/makepkg.conf.d/zz-native.conf"
+
+# The CachyOS kernel from the AUR. It is far too big for the tmpfs the
+# makepkg drop-in builds in, so it gets a build directory on disk.
+CACHYOS_PKGS=(linux-cachyos linux-cachyos-headers)
+CACHYOS_BUILDDIR="$HOME/.cache/makepkg-build"
 
 # Neovim reads exactly one directory, and it is not negotiable.
 NVIM_DEST="$XDG_CONFIG_DIR/nvim"
@@ -815,7 +826,7 @@ preflight() {
     local f missing=0 total=0
     for f in "$BASHRC_SRC" "$ZSHRC_SRC" "$BASH_PROFILE_SRC" "$TMUX_SRC" \
              "$PKG_LIST" "$SHELL_SRC/env.sh" "$BLERC_SRC" "$INPUTRC_SRC" \
-             "$STARSHIP_SRC" "$FASTFETCH_SRC"; do
+             "$STARSHIP_SRC" "$FASTFETCH_SRC" "$MAKEPKG_SRC"; do
         total=$((total + 1))
         if [ ! -f "$f" ]; then
             warn "missing data file: $f"
@@ -995,6 +1006,62 @@ install_bash_profile() {
     completed
 }
 
+# makepkg tuned for this machine: -march=native, every core, ccache, tmpfs
+# build directory, no -debug packages, fast package compression. It comes
+# before yay on purpose - yay itself is the first thing makepkg builds.
+install_makepkg_native() {
+    log "makepkg: native code, fast builds"
+    step "installs makepkg-native.conf as $MAKEPKG_DEST"
+    step "-march=native, target-cpu=native, -j\$(nproc), ccache, BUILDDIR=/tmp/makepkg, !debug"
+    hint "packages built after this run only on this CPU generation"
+    confirm "Tune makepkg for this CPU and for build speed?" y || { skipped; return 0; }
+    need_file "$MAKEPKG_SRC" || return 1
+    ensure_sudo || return 1
+
+    # SMT switched off in the firmware halves the jobs every build gets, and
+    # nothing in the OS can turn it back on. Worth one line of warning.
+    local tpc
+    tpc="$(lscpu 2>/dev/null | awk -F: '/^Thread\(s\) per core/ {gsub(/ /, "", $2); print $2}')"
+    if [ "${tpc:-0}" = "1" ]; then
+        warn "SMT is off: $(nproc) threads on $(nproc) cores"
+        hint "enable SMT in the firmware setup (AMD: CPU Configuration -> SMT Mode)"
+        hint "for roughly 1.5-2x faster builds; MAKEFLAGS follows nproc on its own"
+    fi
+
+    local -a nc=()
+    mapfile -t nc < <(noconfirm_args)
+    run sudo pacman -S --needed "${nc[@]}" -- ccache \
+        || warn "could not install ccache - builds still work, without the cache"
+
+    if [ -f "$MAKEPKG_DEST" ] && cmp -s "$MAKEPKG_SRC" "$MAKEPKG_DEST"; then
+        ok "$MAKEPKG_DEST is already up to date"
+    else
+        if [ -f "$MAKEPKG_DEST" ]; then
+            warn "$MAKEPKG_DEST differs - keeping a backup next to it"
+            run sudo cp -p "$MAKEPKG_DEST" "$MAKEPKG_DEST.bak.$(date +%Y%m%d-%H%M%S)" || return 1
+        fi
+        run sudo install -Dm644 "$MAKEPKG_SRC" "$MAKEPKG_DEST" \
+            || { err "could not install $MAKEPKG_DEST"; return 1; }
+    fi
+
+    # The cache is per user; 20 GB holds a few kernel builds.
+    if have ccache; then
+        run ccache --max-size=20G || warn "could not set the ccache size"
+    fi
+
+    if [ "$DRY_RUN" != "1" ]; then
+        local cflags
+        cflags="$(bash -c 'source /etc/makepkg.conf; for f in /etc/makepkg.conf.d/*.conf; do source "$f"; done; printf "%s" "$CFLAGS"' 2>/dev/null || true)"
+        case "$cflags" in
+            *-march=native*) ok "makepkg now builds with -march=native" ;;
+            *) warn "CFLAGS do not contain -march=native - check $MAKEPKG_DEST"
+               hint "the stock CFLAGS no longer start with -march=x86-64 -mtune=generic?" ;;
+        esac
+    fi
+    ok_did "makepkg tuned"
+    completed
+}
+
 # 4. yay, built from the AUR - but only when it is not already there.
 install_yay() {
     log "AUR helper"
@@ -1108,6 +1175,69 @@ install_yay_packages() {
     err "${#bad[@]} package(s) could not be installed: ${bad[*]}"
     hint "check the names against the repositories and the AUR, then edit $PKG_LIST"
     return 1
+}
+
+# The CachyOS kernel, built from the AUR for exactly this CPU.
+#
+# _processor_opt=native is the PKGBUILD's own switch (it enables
+# X86_NATIVE_CPU); the kernel ignores makepkg's CFLAGS, so the drop-in above
+# does not reach it. The stock `linux` stays installed as the fallback entry
+# in the boot menu - a kernel that does not boot must not be the only one.
+#
+# Not --noconfirm on an interactive run: the PKGBUILD verifies signatures,
+# and yay asks before importing the packagers' PGP keys. That question is
+# worth reading once.
+install_cachyos_kernel() {
+    log "CachyOS kernel"
+    step "builds ${CACHYOS_PKGS[*]} from the AUR with _processor_opt=native"
+    step "build directory: $(tilde "$CACHYOS_BUILDDIR") (too big for tmpfs)"
+    step "sets GRUB_TOP_LEVEL so GRUB boots it by default; linux stays as fallback"
+    hint "this compiles a whole kernel - from 20 minutes to an hour"
+    if ! have yay; then
+        warn "yay is not installed - skipping the CachyOS kernel"
+        skipped
+        return 0
+    fi
+    if pacman -Q "${CACHYOS_PKGS[0]}" >/dev/null 2>&1; then
+        ok "${CACHYOS_PKGS[0]} is already installed - 'yay -Syu' keeps it current"
+    else
+        confirm "Build and install the CachyOS kernel?" y || { skipped; return 0; }
+        ensure_sudo || return 1
+        local -a yflags=(-S --needed)
+        if [ "$ASSUME_YES" = "1" ]; then
+            yflags+=(--noconfirm --answerdiff None --answerclean All)
+        fi
+        run mkdir -p "$CACHYOS_BUILDDIR" || return 1
+        if ! run env _processor_opt=native BUILDDIR="$CACHYOS_BUILDDIR" \
+                yay "${yflags[@]}" -- "${CACHYOS_PKGS[@]}"; then
+            err "building the CachyOS kernel failed"
+            hint "the stock kernel is untouched; check the yay output above"
+            return 1
+        fi
+    fi
+
+    local grub=/etc/default/grub top='GRUB_TOP_LEVEL="/boot/vmlinuz-linux-cachyos"'
+    if [ ! -f "$grub" ]; then
+        warn "$grub not found - not a GRUB system, set the default entry yourself"
+        completed
+        return 0
+    fi
+    ensure_sudo || return 1
+    if grep -qxF "$top" "$grub"; then
+        ok "GRUB already boots linux-cachyos by default"
+    else
+        run sudo cp -p "$grub" "$grub.bak.$(date +%Y%m%d-%H%M%S)" || return 1
+        if grep -q '^GRUB_TOP_LEVEL=' "$grub"; then
+            run sudo sed -i "s|^GRUB_TOP_LEVEL=.*|$top|" "$grub" || return 1
+        else
+            run sudo sed -i "\$a $top" "$grub" || return 1
+        fi
+        run sudo grub-mkconfig -o /boot/grub/grub.cfg \
+            || { err "grub-mkconfig failed - the old grub.cfg is still in place"; return 1; }
+    fi
+    ok_did "CachyOS kernel installed and set as the default boot entry"
+    hint "reboot, then check: uname -r  and  zgrep X86_NATIVE_CPU=y /proc/config.gz"
+    completed
 }
 
 # 6. zsh: the configuration, Oh My Zsh, the three custom plugins, the mtsh
@@ -1984,8 +2114,10 @@ main() {
     do_step "system update" install_update_and_upgrade
     do_step "bashrc"        install_bashrc
     do_step "bash profile"  install_bash_profile
+    do_step "makepkg"       install_makepkg_native
     do_step "yay"           install_yay
     do_step "packages"      install_yay_packages
+    do_step "cachyos kernel" install_cachyos_kernel
     do_step "zsh"           install_zsh
     do_step "ssh key"       install_sshkey
     do_step "libvirt"       install_libvirt_configuration
