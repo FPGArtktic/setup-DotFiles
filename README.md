@@ -8,9 +8,17 @@ Author: Mateusz Okulanis.  GNU GPLv3 or later.  See `LICENSE`.
   <img src="img/logo.jpeg" alt="setup-dotFiles" width="500"/>
 </p>
 
-This is the **`arch`** branch: everything here installs with `pacman` and `yay`. The Debian and
-Ubuntu versions live on `master`, `bookworm`, `bullseye`, `ubuntu2004`, `ubuntu2204` and
-`ubuntu2404`; there is no `apt` code path on this branch and nothing here will run on those systems.
+Two systems are supported, one branch each:
+
+| branch    | system                  | packages          |
+|-----------|-------------------------|-------------------|
+| `master`  | Arch Linux (this branch) | `pacman`, `yay`  |
+| `trixie`  | Debian 13 (trixie)      | `apt`             |
+
+The dotfiles themselves (`bashrc`, `zshrc`, `shell/`, `tmux.conf`, `nvim/`, `starship.toml`) are the
+same on both; only the package layer differs. There is no `apt` code path on this branch. The
+other branches - `arch`, `bookworm`, `bullseye`, `ubuntu2004`, `ubuntu2204`, `ubuntu2404` - are old
+versions kept for reference and are no longer maintained.
 
 ---
 
@@ -56,12 +64,12 @@ The test environment needs podman instead. Nothing else.
 There is no installation. Clone the repository and run the script from it:
 
 ```sh
-git clone -b arch https://github.com/FPGArtktic/setup-DotFiles.git
+git clone https://github.com/FPGArtktic/setup-DotFiles.git
 cd setup-DotFiles
 ./setup-dotFiles.sh
 ```
 
-`-b arch` is not optional. The default branch is the apt one.
+`master`, the default branch, is the Arch one. On Debian 13 clone with `-b trixie` instead.
 
 The script finds its data files (`bashrc`, `zshrc`, `shell/`, `audio/`, `yay-apps.txt` and the
 rest, see section 11) next to itself, not in the current directory, so
@@ -325,7 +333,7 @@ but it is also why you should not point this at a tree you care about.
 The first five minutes on a new machine:
 
 ```sh
-git clone -b arch https://github.com/FPGArtktic/setup-DotFiles.git
+git clone https://github.com/FPGArtktic/setup-DotFiles.git
 cd setup-DotFiles
 ./setup-dotFiles.sh --dry-run --yes      # rehearse the whole thing, change nothing
 ./setup-dotFiles.sh --git-name 'Your Name' --git-email you@example.com
@@ -449,8 +457,8 @@ built-in default.
 
 ## 13 Problems
 
-**`pacman not found - this branch targets Arch Linux only`.** You are on a Debian or Ubuntu system.
-Use `master`, `bookworm`, `bullseye`, `ubuntu2004`, `ubuntu2204` or `ubuntu2404`.
+**`pacman not found - this branch targets Arch Linux only`.** You are on another system. On
+Debian 13 use the `trixie` branch; nothing else is supported.
 
 **`do not run this script as root`.** Run it as yourself. `makepkg` refuses root outright, and as
 root every dotfile would be installed into `/root`.

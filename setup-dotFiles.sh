@@ -856,7 +856,7 @@ preflight() {
         ok "pacman found - Arch Linux family"
     else
         err "pacman not found - this branch targets Arch Linux only"
-        hint "the apt-based versions live on the master/ubuntu*/debian branches"
+        hint "the Debian 13 version lives on the trixie branch"
         problems=$((problems + 1))
     fi
 
