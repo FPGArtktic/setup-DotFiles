@@ -491,7 +491,7 @@ gh_fetch() {
         err "no sha256 digest published for $repo $asset"
         return 1
     fi
-    curl -fL --retry 3 -o "$dest" \
+    curl -fsSL --retry 3 -o "$dest" \
         "https://github.com/$repo/releases/latest/download/$asset" || return 1
     got="$(sha256sum "$dest" | awk '{print $1}')"
     if [ "$got" != "$want" ]; then
@@ -1676,8 +1676,12 @@ install_prompt_tools() {
     install_debian_shims || return 1
 
     local t
+    # ~/.local/bin is on the PATH of the shells this installs, not
+    # necessarily on the PATH this script was started with - so the links
+    # made just above are looked for there too.
     for t in starship fastfetch fzf zoxide eza bat fd delta; do
-        have "$t" || warn "$t is not installed yet - it comes from $PKG_LIST"
+        have "$t" || [ -x "$HOME/.local/bin/$t" ] \
+            || warn "$t is not installed yet - it comes from $PKG_LIST"
     done
 
     if [ -n "$(find "$NERDFONT_DIR" -name '*.ttf' -print -quit 2>/dev/null)" ]; then
@@ -2063,6 +2067,7 @@ treesitter_bootstrap() (
     trap 'rm -rf "$tmpdir"' EXIT
     gh_fetch "$TREESITTER_REPO" "$TREESITTER_ASSET" "$tmpdir/ts.gz" || return 1
     gunzip "$tmpdir/ts.gz" || return 1
+    chmod 755 "$tmpdir/ts" || return 1        # gunzip does not set +x
     "$tmpdir/ts" --version >/dev/null || return 1
     sudo install -m755 "$tmpdir/ts" "$LOCAL_BIN_SYS/tree-sitter" || return 1
     return 0

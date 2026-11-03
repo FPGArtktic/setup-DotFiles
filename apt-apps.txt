@@ -56,8 +56,10 @@ intel-microcode
 
 # --- editors and terminal ---------------------------------------------------
 # Neovim is NOT here: trixie's 0.10.4 is too old for LazyVim (0.11.2+), so the
-# neovim step installs the upstream release into /opt instead. A second,
-# older /usr/bin/nvim would only confuse `which nvim`.
+# neovim step installs the upstream release into /opt, linked as
+# /usr/local/bin/nvim. python3-pynvim below still pulls Debian's neovim in as a
+# dependency; /usr/local/bin comes before /usr/bin on Debian's PATH, so the
+# upstream one is what runs.
 vim
 nano
 tmux
