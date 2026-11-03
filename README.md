@@ -16,9 +16,8 @@ Two systems are supported, one branch each:
 | `trixie`  | Debian 13 (trixie)      | `apt`             |
 
 The dotfiles themselves (`bashrc`, `zshrc`, `shell/`, `tmux.conf`, `nvim/`, `starship.toml`) are the
-same on both; only the package layer differs. There is no `apt` code path on this branch. The
-other branches - `arch`, `bookworm`, `bullseye`, `ubuntu2004`, `ubuntu2204`, `ubuntu2404` - are old
-versions kept for reference and are no longer maintained.
+same on both; only the package layer differs. There is no `apt` code path on this branch, and no
+other system or release is supported.
 
 ---
 
