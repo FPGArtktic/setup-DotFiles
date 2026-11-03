@@ -422,6 +422,15 @@ ensure_sudo() {
         err "sudo is not installed - this step needs root"
         return 1
     fi
+    # A NOPASSWD rule is checked first, without a prompt. `sudo -v` alone is
+    # not enough there: with the default verifypw=all it still demands a
+    # password whenever ANY matching rule needs one - and on Debian the
+    # stock "%sudo ALL=(ALL:ALL) ALL" always does - so an unattended run with
+    # a perfectly good NOPASSWD rule stopped at "a terminal is required".
+    if sudo -n true 2>/dev/null; then
+        SUDO_PRIMED=1
+        return 0
+    fi
     if ! sudo -v; then
         err "could not obtain sudo credentials"
         return 1
