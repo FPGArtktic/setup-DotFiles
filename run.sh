@@ -4,7 +4,7 @@
 #  Author: Mateusz Okulanis
 #  License: Unlicense
 #
-#  An Arch container with a passwordless-sudo user and this repository
+#  A Debian 13 (trixie) container with a passwordless-sudo user and this repository
 #  mounted at /app, so setup-dotFiles.sh can be exercised without touching
 #  the machine you are sitting at:
 #
@@ -37,7 +37,7 @@ HOST_GID="$(id -g)"
 # one machine must not share a tag - the second build would silently hand the
 # first one a container that writes files owned by somebody else.
 IMAGE_SLUG="$(printf '%s' "$HOST_USER" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_.-')"
-IMAGE_NAME="setup-dotfiles-test-${IMAGE_SLUG:-user}"
+IMAGE_NAME="setup-dotfiles-trixie-test-${IMAGE_SLUG:-user}"
 # Appended only when the reference does not carry a tag of its own - see
 # image_ref(). "--tag myimage:v2" used to become "myimage:v2:latest", which
 # podman rejects as an invalid reference.
@@ -177,7 +177,7 @@ EOF
 select_engine() {
     if ! have podman; then
         err "podman is not installed"
-        hint "arch: sudo pacman -S podman   (rootless, nothing to enable)"
+        hint "debian: sudo apt-get install podman   (rootless, nothing to enable)"
         exit 1
     fi
     step "engine ...... podman"
@@ -296,7 +296,7 @@ build_image() {
         # Containerfile takes part in the cache key of every instruction after
         # it, so a wall-clock timestamp invalidates the whole chain on every
         # single build: measured, a no-op rebuild went from 1.9 s to 18.2 s
-        # and re-downloaded ~17 MB of packages plus a fresh yay clone. The
+        # and re-downloaded ~17 MB of packages. The
         # commit date changes only when the repository does, which is exactly
         # when a rebuild is warranted.
         --build-arg "DOT_BUILD_DATE=$(build_stamp)"

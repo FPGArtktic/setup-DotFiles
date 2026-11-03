@@ -1,0 +1,265 @@
+# ---------------------------------------------------------------------------
+# apt-apps.txt - the package set installed by setup-dotFiles.sh on Debian 13
+# (trixie).
+#
+# One package name per line. Blank lines and #-comments are ignored, so
+# annotating this file is free. The reader is:
+#
+#     grep -vE '^[[:space:]]*(#|$)' apt-apps.txt
+#
+# Every surviving name is handed to a single `apt-get install` transaction,
+# and apt-get refuses the WHOLE transaction on one unknown name; the script
+# then retries one package at a time and names the ones that failed. Check a
+# name with `apt-cache policy <name>` before you add it.
+#
+# This list mirrors yay-apps.txt on the master (Arch) branch. Where Debian
+# names a package differently the comment says so; where Debian has no
+# package at all, or installing it would do something the Arch package does
+# not (start a service on install), the package is listed in the "not here"
+# notes at the end of its section instead.
+#
+# Everything comes from trixie main; the stock sources.list is enough.
+# ---------------------------------------------------------------------------
+
+# --- base system and core CLI -----------------------------------------------
+# build-essential is Debian's base-devel: gcc, g++, make, libc headers.
+build-essential
+binutils
+bash
+bash-completion
+zsh
+less
+tar
+xz-utils
+wget
+rsync
+python3
+curl
+# openssh-client provides ssh-keygen (install_sshkey); openssh-server so the
+# machine can be reached the way it was set up.
+openssh-client
+openssh-server
+sudo
+
+# --- kernel and firmware ----------------------------------------------------
+# The kernel itself is already installed. The headers metapackage follows it,
+# so DKMS modules (GPU drivers, anything out of tree) build on every upgrade.
+# Microcode for both vendors: whichever does not match the CPU is never loaded.
+linux-headers-amd64
+firmware-linux-free
+amd64-microcode
+intel-microcode
+#
+# Not here: the GPU driver. The Arch list carries nvidia-open-dkms for one
+# specific RTX 50 machine; on Debian the NVIDIA driver needs contrib and
+# non-free enabled and is a decision per machine, not a dotfiles default.
+
+# --- editors and terminal ---------------------------------------------------
+# Neovim is NOT here: trixie's 0.10.4 is too old for LazyVim (0.11.2+), so the
+# neovim step installs the upstream release into /opt instead. A second,
+# older /usr/bin/nvim would only confuse `which nvim`.
+vim
+nano
+tmux
+mc
+#
+# Not here: konsole. The KDE terminal the konsole step configures; on a GNOME
+# machine it pulls in a large part of KDE. Add it if you use it - the konsole
+# step configures it whenever it is installed.
+
+# --- development ------------------------------------------------------------
+git
+lazygit
+#
+# Not here: visual-studio-code-bin (Microsoft's own apt repository).
+
+# --- containers and application sandboxing ----------------------------------
+# podman only, no docker. podman is rootless and daemonless: there is no
+# service to enable and no "docker" group, whose membership is equivalent to
+# passwordless root. bashrc and zshrc alias docker to podman and docker-compose
+# to podman-compose.
+podman
+podman-compose
+buildah
+distrobox
+flatpak
+#
+# Not here: podman-desktop and podman-tui (no Debian package; podman-desktop
+# is on Flathub).
+
+# --- virtualisation: KVM / QEMU / libvirt -----------------------------------
+# libvirt-daemon-system brings the daemon, the "libvirt" group and the
+# default network definition; libvirt-clients brings virsh.
+libvirt-daemon-system
+libvirt-clients
+# qemu-system-x86 + qemu-utils is what qemu-full gives on Arch for x86 guests
+# (qemu-img comes with qemu-utils).
+qemu-system-x86
+qemu-utils
+virt-manager
+virt-viewer
+# dnsmasq-base, NOT dnsmasq: libvirt only needs the binary for its NAT
+# network. The full dnsmasq package enables a system-wide dnsmasq.service
+# that grabs port 53 and fights systemd-resolved and libvirt's own instance.
+dnsmasq-base
+# UEFI firmware for guests (edk2-ovmf on Arch) and the software TPM
+# Windows 11 needs.
+ovmf
+swtpm
+swtpm-tools
+dmidecode
+libosinfo-bin
+osinfo-db
+# Sharing a directory with a guest: virtiofs (fast, needs the guest kernel
+# driver) and SPICE folder redirection (phodav/spice-webdavd).
+virtiofsd
+spice-webdavd
+# qemu+ssh:// connections to a remote libvirt host.
+netcat-openbsd
+
+# --- remote and shared filesystems ------------------------------------------
+# gvfs-backends is Debian's gvfs-smb (and the other gvfs backends).
+gvfs-backends
+cifs-utils
+rclone
+
+# --- networking -------------------------------------------------------------
+network-manager
+network-manager-openvpn
+iw
+wireless-tools
+wpasupplicant
+net-tools
+#
+# Not here: iwd. On Arch it sits unused until enabled; Debian enables
+# iwd.service on install, and with NetworkManager still configured for
+# wpa_supplicant the two fight over the Wi-Fi card.
+# Tailscale is not here either: it is its own opt-in step, which adds
+# Tailscale's apt repository first.
+
+# --- audio -------------------------------------------------------------------
+# The audio step's profile (docs/AUDIO.md) is written for PipeWire and
+# WirePlumber, which trixie uses by default.
+pipewire
+pipewire-pulse
+pipewire-alsa
+pipewire-jack
+wireplumber
+alsa-utils
+strawberry
+#
+# Not here: wiremix and pwvucontrol (no Debian package).
+
+# --- monitoring and diagnostics ---------------------------------------------
+htop
+atop
+glances
+iotop
+iftop
+nethogs
+nload
+ncdu
+
+# --- filesystems, disks and storage -----------------------------------------
+exfatprogs
+btrfs-progs
+snapper
+gnome-disk-utility
+#
+# Not here: snap-pac and grub-btrfs (no Debian package).
+
+# --- security and privacy ---------------------------------------------------
+# keepass2 is Debian's name for keepass.
+keepass2
+#
+# Not here: veracrypt (no Debian package) and usbguard. Debian's usbguard
+# starts its daemon on install with a policy of the devices plugged in at
+# that moment, so the next keyboard or stick you plug in is blocked. Install
+# it deliberately, with a policy you wrote, if you want it.
+
+# --- desktop applications ---------------------------------------------------
+calibre
+thunderbird
+vlc
+#
+# Not here: signal-desktop and microsoft-edge (vendor apt repositories only),
+# telegram-desktop (dropped from trixie; Flathub has it).
+
+# ===========================================================================
+#  Shared developer environment
+#
+#  Everything from here down is what the Neovim, bash, zsh and tmux
+#  configuration in this repository calls. See yay-apps.txt on master for the
+#  long version of why each one is needed.
+# ===========================================================================
+
+# --- toolchain and build ----------------------------------------------------
+gcc
+make
+cmake
+pkg-config
+
+# --- CLI tools the shell configuration expects ------------------------------
+# fd-find installs fdfind and bat installs batcat; the prompt step links them
+# as fd and bat in ~/.local/bin so the shell files work unchanged.
+ripgrep
+fd-find
+bat
+eza
+git-delta
+btop
+fzf
+starship
+zoxide
+# command-not-found: the database Oh My Zsh's command-not-found plugin asks
+# (pkgfile on Arch). It refreshes itself on every apt-get update.
+command-not-found
+# The plain JetBrains Mono; the Nerd Font variant is downloaded by the prompt
+# step, since Debian does not package it.
+fonts-jetbrains-mono
+fontconfig
+jq
+tree
+lynx
+shellcheck
+man-db
+manpages
+manpages-dev
+debianutils
+diffutils
+procps
+psmisc
+inetutils-telnet
+ca-certificates
+gnupg
+# minicom: the `serial` alias in shell/aliases.sh.
+minicom
+
+# --- system fetch on shell start --------------------------------------------
+# neofetch is gone from trixie; the greeting only uses fastfetch anyway.
+fastfetch
+
+# --- archives ---------------------------------------------------------------
+gzip
+zip
+unzip
+zstd
+7zip
+
+# --- language runtimes for Neovim (LSP servers, parsers, providers) ---------
+# Mason installs the npm-based servers with npm, the Go ones with go, and the
+# Python ones (ruff and friends) into a virtualenv - which on Debian needs
+# python3-venv, a separate package. Without it every pip-based Mason package
+# fails with "ensurepip is not available".
+python3-pip
+python3-venv
+python3-pynvim
+nodejs
+npm
+golang-go
+# tree-sitter-cli is NOT here: trixie's 0.22.6 cannot build parsers for the
+# nvim-treesitter main branch; the neovim step installs the upstream CLI.
+
+# --- clipboard bridges ------------------------------------------------------
+wl-clipboard
+xclip
